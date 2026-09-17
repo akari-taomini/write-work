@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clone, equal, mergeThreeWay, characterContent, characterPatch, applySuggestion, newEntry, snapshot } from '../core.js';
+import { clone, equal, mergeThreeWay, characterContent, characterPatch, applySuggestion, newEntry, snapshot, opaqueThemeColor } from '../core.js';
 import { TavernBridge } from '../bridge.js';
 
 test('merge retains unrelated live edits and unknown extension data', () => {
@@ -80,4 +80,10 @@ test('world save is verified against the server before success is reported', asy
     bridge.read = async () => ({ entries: {} });
     await assert.rejects(bridge.write({ kind: 'world', id: 'Lore' }, { entries: {} }, { entries: { 0: { content: 'new' } } }), /未能完整保存/);
     assert.equal(immediate, true);
+});
+test('theme backgrounds keep their color channels and become fully opaque', () => {
+    assert.equal(opaqueThemeColor('rgba(12, 23, 34, 0.25)'), 'rgb(12  23  34 / 1)');
+    assert.equal(opaqueThemeColor('rgb(230 220 210 / 20%)'), 'rgb(230 220 210 / 1)');
+    assert.equal(opaqueThemeColor('#11223355'), '#112233');
+    assert.equal(opaqueThemeColor('color(display-p3 0.2 0.3 0.4 / 0.3)'), 'color(display-p3 0.2 0.3 0.4 / 1)');
 });

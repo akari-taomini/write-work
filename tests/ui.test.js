@@ -4,7 +4,7 @@ const { Window } = await import(process.env.WW_DOM_MODULE || 'happy-dom');
 const window = new Window({ url: 'http://localhost:8000/' });
 for (const key of ['window', 'document', 'localStorage', 'Event', 'CustomEvent', 'HTMLElement']) globalThis[key] = window[key];
 globalThis.__WW_TEST__ = true;
-const { Workbench } = await import('../index.js');
+const { Workbench, install } = await import('../index.js');
 const { clone, characterContent } = await import('../core.js');
 
 test('editing, draft recovery, save failure, conflicts, AI and resource switching', async () => {
@@ -14,7 +14,7 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
         preset: { prompts: [{ identifier: 'main', name: '写作指导', content: '细腻', role: 'system' }, { identifier: 'history', name: '聊天历史', marker: true }], prompt_order: [{ character_id: 100001, order: [{ identifier: 'main', enabled: true }] }] },
     };
     const ctx = { accountStorage: localStorage, mainApi: 'openai', onlineStatus: 'connected', stopGeneration() {} };
-    let writes = 0, shouldFail = false, active = 'x.png';
+    let writes = 0, shouldFail = false, active = 'x.png', lastPrompt;
     const bridge = {
         context: () => ctx,
         currentCharacter: () => ({ avatar: active, name: '林舟' }),
@@ -24,7 +24,7 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
         assertCharacter: a => { if (a !== active) throw Error('角色已变更'); },
         read: async meta => clone(state[meta.kind]),
         write: async (meta, live, next) => { if (shouldFail) throw Error('保存失败'); state[meta.kind] = clone(next); writes++; },
-        generate: async () => '润色后的文字', testChat: async () => {},
+        generate: async prompt => { lastPrompt = prompt; return '润色后的文字'; }, testChat: async () => {},
     };
     const app = new Workbench(bridge);
     await app.open();
@@ -56,9 +56,36 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
     await action('accept'); assert.equal(app.editor.value, '润色后的文字');
     await action('undo'); assert.equal(app.editor.value, '细腻');
     await action('polish'); type('生成后又改了正文'); await action('accept'); assert.equal(app.editor.value, '生成后又改了正文');
+    // Mobile workflow: a stale selection must not narrow the default whole-field revision.
+    type('前半段和后半段都要保留'); app.savedSelection = [0, 3];
+    app.$('.ww-ai-mode').value = 'current'; app.$('.ww-instruction').value = '修改性格，其他不变';
+    await action('generate'); assert.ok(lastPrompt.includes('前半段和后半段都要保留'));
+    app.$('.ww-ai-mode').value = 'write'; await action('generate');
+    assert.ok(lastPrompt.includes('当前写卡预设')); assert.ok(!lastPrompt.includes('前半段和后半段都要保留'));
+    assert.ok(app.$('[data-action="accept"]').disabled);
+    app.$('.ww-ai-mode').value = 'result'; await action('generate'); assert.ok(lastPrompt.includes('润色后的文字'));
+    ctx.chat = [{ is_user: false, mes: '上一份写卡输出' }, { is_user: true, mes: '我的意见' }];
+    await action('latest'); assert.equal(app.$('.ww-suggestion').value, '上一份写卡输出');
+    await app.run(() => app.switchTab('character'));
+    assert.equal(app.$('.ww-suggestion').value, '上一份写卡输出');
+    app.$('.ww-destination').value = 'personality'; await action('place');
+    assert.equal(app.doc.draft.personality, '上一份写卡输出');
+    assert.notEqual(state.character.personality, '上一份写卡输出');
+    await action('undo'); assert.equal(app.doc.draft.personality, '安静');
     await app.run(() => app.switchTab('character')); type('关闭后恢复'); app.close();
     const second = new Workbench(bridge); await second.open(); assert.equal(second.editor.value, '关闭后恢复');
+    assert.equal(second.$('.ww-suggestion').value, '上一份写卡输出');
     active = 'other.png'; await action('save'); assert.notEqual(state.character.description, '关闭后恢复');
     second.close();
     await window.happyDOM.abort();
+});
+test('launcher has its own full-width container and uses native theme classes', () => {
+    document.body.insertAdjacentHTML('beforeend', '<div id="extensions_settings2"><div id="other-extension"></div></div>');
+    install(); install();
+    assert.equal(document.querySelectorAll('#writer-workbench-launch').length, 1);
+    const button = document.querySelector('#writer-workbench-launch');
+    assert.equal(button.parentElement.id, 'writer-workbench-settings');
+    assert.equal(button.parentElement.parentElement.id, 'extensions_settings2');
+    assert.equal(button.querySelector('span:last-child').textContent, '写卡工作台');
+    assert.ok(button.classList.contains('menu_button'));
 });
