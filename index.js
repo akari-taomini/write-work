@@ -1,4 +1,5 @@
 import { TavernBridge } from './bridge.js';
+import { searchRanges, highlightText } from './search.js';
 import { DraftStore, storageMessage } from './storage.js';
 import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
 import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
@@ -61,8 +62,9 @@ export class Workbench {
                 <div class="ww-editor-heading"><div><h2 class="ww-title">开始写作</h2><small class="ww-hint"></small></div><button data-action="search" title="查找与替换">查找替换</button></div>
                 <div class="ww-search" hidden><input class="ww-find" placeholder="查找文字" aria-label="查找文字"><input class="ww-replace" placeholder="替换为" aria-label="替换文字"><button data-action="find">查找下一个</button><button data-action="replace">全部替换</button></div>
                 <div class="ww-fields"></div>
-                <textarea class="ww-editor" aria-label="正文编辑区" spellcheck="false" placeholder="从这里开始，写下你的角色……"></textarea>
-                <div class="ww-editor-meta"><span class="ww-count">0 字</span><span>Ctrl / ⌘ + S 写入酒馆</span><button data-action="duplicate" hidden>复制条目</button></div>
+                <div class="ww-hit-nav" hidden><span class="ww-hit-count" role="status"></span><button data-action="hit-prev">上一个</button><button data-action="hit-next">下一个</button></div>
+                <div class="ww-editor-wrap"><textarea class="ww-editor" aria-label="正文编辑区" spellcheck="false" placeholder="从这里开始，写下你的角色……"></textarea><div class="ww-highlight-viewport" aria-hidden="true"><div class="ww-highlight-text"></div></div></div>
+                <div class="ww-editor-meta"><span class="ww-count">0 字</span><span>Ctrl / ⌘ + S 写入酒馆</span><button data-action="duplicate" hidden>复制条目</button><button data-action="delete-entry" hidden>删除当前条目</button></div>
                 <details class="ww-notes"><summary>创作备注 <small>仅自己可见，不加入角色提示词</small></summary><textarea class="ww-note" aria-label="创作备注" placeholder="灵感、待办、还没想好的伏笔……"></textarea></details>
                 <section class="ww-assistant" aria-label="写卡与修改">
                   <div class="ww-row"><strong>写卡与修改</strong><button data-action="ai-close" aria-label="收起写卡与修改">✕</button></div>
@@ -80,7 +82,7 @@ export class Workbench {
             <div class="ww-message" role="status" aria-live="polite"></div>
             <footer class="ww-footer"><span class="ww-status">准备就绪</span><div class="ww-row ww-primary-actions"><button data-action="save" class="ww-primary">写入酒馆</button><button data-action="ai">✧ AI 辅助</button><button data-action="export">导出草稿</button></div><details class="ww-more"><summary>更多操作</summary><div class="ww-row"><button data-action="undo">撤回</button><button data-action="history">历史版本</button><button data-action="import">导入草稿</button><button data-action="test">保存并新开试聊</button></div></details><input class="ww-import" type="file" accept=".json,application/json" hidden></footer>
             <section class="ww-history" hidden aria-label="历史版本"><div class="ww-row"><h2>历史版本</h2><button data-action="history-close">返回编辑</button></div><div class="ww-history-list"></div><pre class="ww-history-preview"></pre><button data-action="restore" class="ww-primary" disabled>恢复到草稿</button></section>
-            <section class="ww-exit" hidden role="alertdialog" aria-modal="true" aria-label="退出前检查草稿"><h2>还有内容没写入酒馆</h2><p class="ww-exit-message"></p><ul class="ww-exit-list"></ul><div class="ww-row"><button data-action="exit-cancel" class="ww-primary">返回继续编辑</button><button data-action="exit-confirm">保留本地草稿并退出</button></div></section>
+            <section class="ww-exit" hidden role="alertdialog" aria-modal="true" aria-label="退出前检查草稿"><h2>还有内容没写入酒馆</h2><p class="ww-exit-message"></p><ul class="ww-exit-list"></ul><div class="ww-row"><button data-action="exit-cancel" class="ww-primary">返回继续编辑</button><button data-action="exit-confirm">保留本地草稿并退出</button><button data-action="exit-discard">不保存并退出</button></div><small>不保存并退出：放弃以上对象尚未写入的修改，恢复酒馆当前内容；本地备注和 AI 输出仍保留，已经写入酒馆的内容不会撤销。</small><p class="ww-exit-error" role="alert"></p></section>
           </div>`;
         document.body.append(this.dialog);
         this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
@@ -107,9 +109,17 @@ export class Workbench {
         this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
         this.themeObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
         this.editor = this.$('.ww-editor');
+        this.searchSource = 'filter'; this.activeHit = -1;
+        this.highlightResize = new window.ResizeObserver(() => this.syncHighlights());
+        this.highlightResize.observe(this.editor);
         this.dialog.addEventListener('click', event => this.click(event));
-        this.dialog.addEventListener('cancel', event => { event.preventDefault(); if (!this.$('.ww-exit').hidden) this.cancelExit(); else if (!this.busy) this.close(); });
+        this.dialog.addEventListener('cancel', event => { event.preventDefault(); if (this.busy) return; if (!this.$('.ww-exit').hidden) this.cancelExit(); else this.close(); });
         this.dialog.addEventListener('keydown', event => {
+            if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f' && this.$('.ww-exit').hidden && this.$('.ww-history').hidden) {
+                event.preventDefault(); this.$('.ww-search').hidden = false; this.searchSource = 'find';
+                this.$('.ww-find').focus(); this.$('.ww-find').select(); this.updateHighlights();
+            }
+            if (event.target === this.$('.ww-find') && event.key === 'Enter') { event.preventDefault(); this.navigateHit(event.shiftKey ? -1 : 1); }
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); this.run(() => this.save()); }
         });
         this.editor.addEventListener('input', () => {
@@ -120,6 +130,7 @@ export class Workbench {
         const selection = () => { this.savedSelection = [this.editor.selectionStart, this.editor.selectionEnd]; };
         ['select', 'keyup', 'pointerup', 'blur'].forEach(event => this.editor.addEventListener(event, selection));
         this.editor.addEventListener('scroll', () => {
+            this.syncHighlights();
             if (this.doc && this.field) { this.doc.scroll ||= {}; this.doc.scroll[this.field.id] = this.editor.scrollTop; }
         });
         this.$('.ww-note').addEventListener('input', event => { this.doc.note = event.target.value; this.persist(); });
@@ -130,7 +141,9 @@ export class Workbench {
             if (file) this.run(() => this.importDraft(file));
         });
         this.$('.ww-resource').addEventListener('change', event => this.run(() => this.loadResource(event.target.value)));
-        this.$('.ww-filter').addEventListener('input', () => this.renderList(undefined, true));
+        this.$('.ww-filter').addEventListener('input', () => { this.searchSource = 'filter'; this.renderList(undefined, true); this.updateHighlights(); });
+        this.$('.ww-find').addEventListener('input', () => { this.searchSource = 'find'; this.updateHighlights(); });
+        this.$('.ww-find').addEventListener('focus', () => { this.searchSource = 'find'; this.updateHighlights(); });
         this.$('.ww-preset-group').addEventListener('change', event => { this.presetGroupIndex = Number(event.target.value); this.renderList(this.field?.id); });
         this.$('.ww-prompt-file').addEventListener('change', event => {
             const file = event.target.files[0]; event.target.value = '';
@@ -152,6 +165,7 @@ export class Workbench {
     syncTheme() {
         const color = window.getComputedStyle(this.themeProbe).backgroundColor;
         this.dialog.style.setProperty('--ww-surface', opaqueThemeColor(color));
+        if (this.editor) this.syncHighlights();
     }
     writingKey() { return `ww:${this.namespace}:writing:${this.avatar}`; }
     async persistWriting() {
@@ -190,6 +204,7 @@ export class Workbench {
         }
     }
     async persist(doc = this.doc) {
+        if (this.discarding) return false;
         if (!doc) return true;
         doc.updated = new Date().toISOString();
         const key = this.storageKey(doc.meta);
@@ -248,6 +263,7 @@ export class Workbench {
             this.$('.ww-exit-message').textContent = failed ? '有本地备份未成功。建议返回编辑，先导出或写入酒馆；现在退出后，未备份的内容可能在刷新时丢失。' : '这些修改已保存在本地草稿，但还没有写入酒馆。可以返回保存，也可以保留草稿，下次继续。';
             this.$('[data-action="exit-confirm"]').textContent = failed ? '仍要退出（未备份）' : '保留本地草稿并退出';
             this.$('.ww-exit').hidden = false;
+            this.$('.ww-exit-error').textContent = '';
             this.$('.ww-shell').inert = true;
             this.$('[data-action="exit-cancel"]').focus();
             return false;
@@ -257,6 +273,27 @@ export class Workbench {
     cancelExit() {
         this.$('.ww-exit').hidden = true;
         this.$('.ww-shell').inert = false;
+    }
+    async discardAndExit() {
+        const docs = this.unwrittenDocuments();
+        this.discarding = true;
+        try {
+            // Read every live object before discarding anything. Never write to Tavern here.
+            const live = await Promise.all(docs.map(doc => this.bridge.read(doc.meta)));
+            for (let i = 0; i < docs.length; i++) {
+                const doc = docs[i];
+                const reset = { ...doc, base: clone(live[i]), draft: clone(live[i]), undo: [], lastEdit: 0 };
+                await this.store.set(this.storageKey(doc.meta), reset);
+                Object.assign(doc, reset);
+                this.failedPersistence.delete(this.storageKey(doc.meta));
+            }
+            await this.persistWriting();
+            if (this.failedPersistence.size) throw new Error('仍有本地备份失败，请返回检查。');
+            this.renderList(); this.cancelExit(); this.dialog.close();
+        } catch (error) {
+            this.$('.ww-exit-error').textContent = `未能完成退出：${error.message}。已恢复成功的对象不再列为未保存；其余草稿仍保留，可重试或返回编辑。`;
+            this.renderList();
+        } finally { this.discarding = false; }
     }
     connection() {
         const ctx = this.bridge.context();
@@ -324,6 +361,9 @@ export class Workbench {
         this.$('.ww-batch').hidden = true; this.$('.ww-insert-tools').hidden = true; this.$('.ww-preset-group-label').hidden = true;
         this.$('.ww-title').textContent = '这里还是空的'; this.$('.ww-hint').textContent = text;
         this.editor.value = ''; this.editor.disabled = true; this.$('.ww-add').hidden = true;
+        this.$('[data-action="delete-entry"]').hidden = true;
+        this.$('[data-action="duplicate"]').hidden = true;
+        this.count();
         this.$('.ww-status').textContent = '未选择内容';
     }
     fields() {
@@ -367,6 +407,7 @@ export class Workbench {
         this.$('.ww-add').hidden = !['greetings', 'world'].includes(this.tab) && !(this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts));
         for (const field of visible) {
             const button = element('button', { type: 'button', 'data-field': field.id }, field.title);
+            highlightText(button, field.title, searchRanges(field.title, this.$('.ww-filter').value.trim().split(/\s+/)));
             button.classList.toggle('ww-active', field.id === this.field?.id);
             list.append(button);
         }
@@ -376,6 +417,8 @@ export class Workbench {
     updateSelectedCount() { this.$('.ww-selected-count').textContent = `已勾选 ${this.selectedPrompts.size} 条（包含被搜索隐藏的勾选项）`; }
     showField(field) {
         this.field = field;
+        this.$('[data-action="delete-entry"]').hidden = !this.canDelete(field);
+        this.$('[data-action="duplicate"]').hidden = this.tab !== 'world' || !field;
         this.$('.ww-mobile-field').value = field?.id || '';
         this.suggestion = null;
         this.savedSelection = [0, 0];
@@ -390,7 +433,7 @@ export class Workbench {
         destination.replaceChildren();
         this.fields().filter(f => !f.marker).forEach(f => destination.append(option(f.id, f.title)));
         if (field && !field.marker) destination.value = field.id;
-        if (!field) { this.editor.value = ''; this.editor.disabled = true; this.$('.ww-title').textContent = '暂无可编辑条目'; this.$('.ww-hint').textContent = '可新增条目；参数型预设请在酒馆原面板调整参数。'; return; }
+        if (!field) { this.editor.value = ''; this.editor.disabled = true; this.$('.ww-title').textContent = '暂无可编辑条目'; this.$('.ww-hint').textContent = '可新增条目；参数型预设请在酒馆原面板调整参数。'; this.count(); return; }
         this.editor.disabled = !!field.marker;
         this.doc.lastField ||= {}; this.doc.lastField[this.tab] = field.id;
         this.doc.lastEdit = 0;
@@ -441,7 +484,63 @@ export class Workbench {
         });
         wrapper.append(input); this.$('.ww-fields').append(wrapper);
     }
-    count() { this.$('.ww-count').textContent = `${Array.from(this.editor.value).length.toLocaleString()} 字`; }
+    count() { this.$('.ww-count').textContent = `${Array.from(this.editor.value).length.toLocaleString()} 字`; this.updateHighlights(); }
+    canDelete(field = this.field) {
+        if (!field || !this.doc) return false;
+        if (this.tab === 'world') return true;
+        if (this.tab === 'greetings') return field.path[0] === 'alternate_greetings';
+        if (this.tab === 'preset' && field.path[0] === 'prompts') {
+            const prompt = this.doc.draft.prompts[field.path[1]];
+            return !prompt.marker && !prompt.system_prompt;
+        }
+        return false;
+    }
+    deleteEntry() {
+        if (!this.canDelete()) throw new Error('固定栏目或酒馆内置提示词不能删除，可编辑正文或停用。');
+        const fields = this.fields(), index = fields.findIndex(f => f.id === this.field.id), id = this.field.id;
+        this.rememberUndo();
+        if (this.tab === 'world') delete this.doc.draft.entries[id];
+        else if (this.tab === 'greetings') this.doc.draft.alternate_greetings.splice(this.field.path[1], 1);
+        else {
+            this.doc.draft.prompts.splice(this.field.path[1], 1);
+            for (const group of this.doc.draft.prompt_order || []) group.order = group.order.filter(p => p.identifier !== id);
+            this.selectedPrompts.delete(id);
+        }
+        this.persist(); this.renderList(this.fields()[Math.min(index, this.fields().length - 1)]?.id);
+        this.message('已从草稿删除，可在“更多操作 → 撤回”中恢复；写入酒馆后才正式生效。');
+    }
+    updateHighlights() {
+        const terms = this.searchSource === 'find' ? [this.$('.ww-find').value] : this.$('.ww-filter').value.trim().split(/\s+/);
+        this.hitRanges = this.field?.marker ? [] : searchRanges(this.editor.value, terms);
+        this.activeHit = -1;
+        this.$('.ww-hit-nav').hidden = !terms.some(Boolean);
+        this.paintHighlights();
+    }
+    paintHighlights() {
+        highlightText(this.$('.ww-highlight-text'), this.editor.value + '\n', this.hitRanges || [], this.activeHit);
+        const total = this.hitRanges?.length || 0;
+        this.$('.ww-hit-count').textContent = `正文 ${this.activeHit < 0 ? 0 : this.activeHit + 1} / ${total} 处`;
+        this.syncHighlights();
+    }
+    syncHighlights() {
+        const style = window.getComputedStyle(this.editor), layer = this.$('.ww-highlight-text'), viewport = this.$('.ww-highlight-viewport');
+        for (const key of ['fontFamily', 'fontSize', 'fontWeight', 'fontStyle', 'fontVariant', 'lineHeight', 'letterSpacing', 'wordSpacing', 'textAlign', 'textIndent', 'textTransform', 'direction', 'tabSize', 'paddingTop', 'paddingRight', 'paddingBottom', 'paddingLeft']) layer.style[key] = style[key];
+        viewport.style.top = style.borderTopWidth; viewport.style.left = style.borderLeftWidth;
+        viewport.style.width = `${this.editor.clientWidth}px`; viewport.style.height = `${this.editor.clientHeight}px`;
+        layer.style.width = `${this.editor.clientWidth}px`;
+        layer.style.transform = `translate(${-this.editor.scrollLeft}px, ${-this.editor.scrollTop}px)`;
+    }
+    navigateHit(direction) {
+        const total = this.hitRanges?.length || 0;
+        if (!total) { this.message('当前正文中没有找到。'); return; }
+        this.activeHit = this.activeHit < 0 ? (direction > 0 ? 0 : total - 1) : (this.activeHit + direction + total) % total;
+        this.paintHighlights();
+        const mark = this.$('.ww-hit-current');
+        const rect = mark.getBoundingClientRect(), editorRect = this.editor.getBoundingClientRect();
+        this.editor.scrollTop += rect.top - editorRect.top - this.editor.clientHeight / 2;
+        this.syncHighlights();
+        this.$('.ww-editor-wrap').scrollIntoView?.({ block: 'nearest' });
+    }
     async save() {
         if (!this.doc) throw new Error('请先选择要编辑的内容。');
         this.bridge.assertCharacter(this.avatar);
@@ -638,12 +737,17 @@ export class Workbench {
         if (action === 'close') return this.close();
         if (action === 'exit-cancel') { this.cancelExit(); return; }
         if (action === 'exit-confirm') return this.close({ confirmed: true });
+        if (action === 'exit-discard') return this.run(() => this.discardAndExit());
         if (action === 'ai' || action === 'ai-close') {
             this.$('.ww-assistant').hidden = action === 'ai-close';
             if (action === 'ai') { this.$('.ww-assistant').scrollIntoView?.({ block: 'start', behavior: 'smooth' }); this.$('.ww-instruction').focus({ preventScroll: true }); }
             return;
         }
-        if (action === 'search') { this.$('.ww-search').hidden = !this.$('.ww-search').hidden; return; }
+        if (action === 'search') { this.$('.ww-search').hidden = !this.$('.ww-search').hidden; this.searchSource = this.$('.ww-search').hidden ? 'filter' : 'find'; this.updateHighlights(); if (!this.$('.ww-search').hidden) this.$('.ww-find').focus(); return; }
+        if (action === 'hit-next' || action === 'hit-prev' || action === 'find') {
+            if (action === 'find' && this.searchSource !== 'find') { this.searchSource = 'find'; this.updateHighlights(); }
+            this.navigateHit(action === 'hit-prev' ? -1 : 1); return;
+        }
         if (action === 'history-close') { this.$('.ww-history').hidden = true; return; }
         if (action === 'import') { this.$('.ww-import').click(); return; }
         if (action === 'import-prompts') { this.$('.ww-prompt-file').click(); return; }
@@ -665,6 +769,7 @@ export class Workbench {
                 this.renderList(this.field?.id, true);
             }
             else if (action === 'create-world') await this.createWorld();
+            else if (action === 'delete-entry') this.deleteEntry();
             else if (action === 'insert-new') this.insertNew();
             else if (action === 'move-to') this.relocate(this.field?.id, this.$('.ww-anchor').value, this.$('.ww-anchor-side').value);
             else if (action === 'add' || action === 'duplicate') this.add(action === 'duplicate');
