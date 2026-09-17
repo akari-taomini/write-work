@@ -1,4 +1,5 @@
 import { TavernBridge } from './bridge.js';
+import { DraftStore, storageMessage } from './storage.js';
 import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
 
 const bridge = new TavernBridge();
@@ -17,8 +18,12 @@ const element = (tag, attrs = {}, text = '') => {
 const option = (value, label) => element('option', { value }, label);
 
 export class Workbench {
-    constructor(adapter = bridge) {
+    constructor(adapter = bridge, store = new DraftStore()) {
         this.bridge = adapter;
+        this.store = store;
+        this.pendingPersistence = 0;
+        this.failedPersistence = new Set();
+        this.persistenceSequence = new Map();
         this.docs = new Map();
         this.tab = 'character';
         this.busy = false;
@@ -41,7 +46,7 @@ export class Workbench {
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
             <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button></nav>
             <div class="ww-body">
-              <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label><div class="ww-list"></div><button data-action="add" class="ww-add">＋ 新增</button></aside>
+              <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label><div class="ww-list"></div><label class="ww-mobile-field-label">当前栏目<select class="ww-mobile-field" aria-label="当前栏目或世界书条目"></select></label><button data-action="add" class="ww-add">＋ 新增</button></aside>
               <main class="ww-main">
                 <div class="ww-editor-heading"><div><h2 class="ww-title">开始写作</h2><small class="ww-hint"></small></div><button data-action="search" title="查找与替换">查找替换</button></div>
                 <div class="ww-search" hidden><input class="ww-find" placeholder="查找文字" aria-label="查找文字"><input class="ww-replace" placeholder="替换为" aria-label="替换文字"><button data-action="find">查找下一个</button><button data-action="replace">全部替换</button></div>
@@ -63,13 +68,24 @@ export class Workbench {
               </main>
             </div>
             <div class="ww-message" role="status" aria-live="polite"></div>
-            <footer class="ww-footer"><span class="ww-status">准备就绪</span><div class="ww-row"><button data-action="undo">撤回</button><button data-action="history">历史版本</button><button data-action="export">导出草稿</button><button data-action="import">导入草稿</button><button data-action="ai">✧ AI 辅助</button><button data-action="save" class="ww-primary">写入酒馆</button><button data-action="test">保存并新开试聊</button></div><input class="ww-import" type="file" accept=".json,application/json" hidden></footer>
+            <footer class="ww-footer"><span class="ww-status">准备就绪</span><div class="ww-row ww-primary-actions"><button data-action="save" class="ww-primary">写入酒馆</button><button data-action="ai">✧ AI 辅助</button><button data-action="export">导出草稿</button></div><details class="ww-more"><summary>更多操作</summary><div class="ww-row"><button data-action="undo">撤回</button><button data-action="history">历史版本</button><button data-action="import">导入草稿</button><button data-action="test">保存并新开试聊</button></div></details><input class="ww-import" type="file" accept=".json,application/json" hidden></footer>
             <section class="ww-history" hidden aria-label="历史版本"><div class="ww-row"><h2>历史版本</h2><button data-action="history-close">返回编辑</button></div><div class="ww-history-list"></div><pre class="ww-history-preview"></pre><button data-action="restore" class="ww-primary" disabled>恢复到草稿</button></section>
           </div>`;
         document.body.append(this.dialog);
         this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
         this.dialog.querySelectorAll('textarea,input:not([type="checkbox"])').forEach(node => node.classList.add('text_pole'));
         this.$ = selector => this.dialog.querySelector(selector);
+        // Keep the history overlay outside the scrolling shell.
+        this.dialog.append(this.$('.ww-history'));
+        const fitViewport = () => {
+            const viewport = window.visualViewport;
+            this.dialog.style.setProperty('--ww-viewport-height', `${viewport?.height || window.innerHeight}px`);
+            this.dialog.style.setProperty('--ww-viewport-top', `${viewport?.offsetTop || 0}px`);
+        };
+        window.visualViewport?.addEventListener('resize', fitViewport);
+        window.visualViewport?.addEventListener('scroll', fitViewport);
+        window.addEventListener('resize', fitViewport);
+        fitViewport();
         this.themeProbe = element('span', { hidden: '' });
         this.themeProbe.style.backgroundColor = 'var(--SmartThemeBlurTintColor, Canvas)';
         this.dialog.append(this.themeProbe);
@@ -102,24 +118,34 @@ export class Workbench {
             if (file) this.run(() => this.importDraft(file));
         });
         this.$('.ww-resource').addEventListener('change', event => this.run(() => this.loadResource(event.target.value)));
+        this.$('.ww-mobile-field').addEventListener('change', event => {
+            if (this.busy) return;
+            this.persist(); this.showField(this.fields().find(field => field.id === event.target.value));
+        });
         this.$('.ww-writing-preset').addEventListener('change', event => this.run(async () => {
             await this.bridge.activatePreset(event.target.value);
             this.connection(); this.message('写作预设已与酒馆同步。');
         }));
         window.addEventListener('pagehide', () => { this.persist(); this.persistWriting(); });
+        window.addEventListener('beforeunload', event => {
+            if (this.pendingPersistence || this.failedPersistence.size) { event.preventDefault(); event.returnValue = ''; }
+        });
     }
     syncTheme() {
         const color = window.getComputedStyle(this.themeProbe).backgroundColor;
         this.dialog.style.setProperty('--ww-surface', opaqueThemeColor(color));
     }
     writingKey() { return `ww:${this.namespace}:writing:${this.avatar}`; }
-    persistWriting() {
+    async persistWriting() {
         if (!this.avatar) return;
-        try { localStorage.setItem(this.writingKey(), JSON.stringify({ instruction: this.$('.ww-instruction').value, output: this.$('.ww-suggestion').value, mode: this.$('.ww-ai-mode').value })); }
-        catch { this.message('写作区未能自动保存，请复制保留输出稿或释放浏览器存储空间。', true); }
+        const key = this.writingKey();
+        this.pendingPersistence++;
+        try { await this.store.set(key, { instruction: this.$('.ww-instruction').value, output: this.$('.ww-suggestion').value, mode: this.$('.ww-ai-mode').value }); this.failedPersistence.delete(key); }
+        catch (error) { this.failedPersistence.add(key); console.warn('[Writer Workbench] Writing storage', error); this.message(storageMessage(error), true); }
+        finally { this.pendingPersistence--; }
     }
-    loadWriting() {
-        const data = JSON.parse(localStorage.getItem(this.writingKey()) || '{}');
+    async loadWriting() {
+        const data = await this.store.get(this.writingKey()) || {};
         this.$('.ww-instruction').value = data.instruction || '';
         this.$('.ww-suggestion').value = data.output || '';
         this.$('.ww-ai-mode').value = data.mode || 'current';
@@ -145,20 +171,33 @@ export class Workbench {
             this.$('.ww-note').disabled = !this.doc;
         }
     }
-    persist() {
+    async persist() {
         if (!this.doc) return true;
-        this.doc.updated = new Date().toISOString();
+        const doc = this.doc;
+        doc.updated = new Date().toISOString();
+        const key = this.storageKey(doc.meta);
+        const sequence = (this.persistenceSequence.get(key) || 0) + 1;
+        this.persistenceSequence.set(key, sequence);
+        this.pendingPersistence++;
+        const clean = equal(doc.base, doc.draft);
+        this.$('.ww-status').textContent = '正在保存草稿…';
         try {
-            // Synchronous, per-document writes also cover closing the tab immediately after typing.
-            const { undo, lastEdit, ...stored } = this.doc;
-            localStorage.setItem(this.storageKey(this.doc.meta), JSON.stringify(stored));
-            this.$('.ww-status').textContent = equal(this.doc.base, this.doc.draft) ? '✓ 已与酒馆一致 · 草稿已保存' : '● 草稿已保存 · 尚未写入酒馆';
+            const { undo, lastEdit, ...stored } = doc;
+            await this.store.set(key, stored);
+            if (this.persistenceSequence.get(key) === sequence) this.failedPersistence.delete(key);
+            if (this.doc === doc && this.persistenceSequence.get(key) === sequence) {
+                this.$('.ww-status').textContent = clean ? '✓ 已与酒馆一致 · 草稿已保存' : '● 草稿已保存 · 尚未写入酒馆';
+            }
             return true;
-        } catch {
-            this.$('.ww-status').textContent = '草稿未保存';
-            this.message('浏览器存储已满或不可用，请立即导出草稿。当前内容仍在编辑器中。', true);
+        } catch (error) {
+            console.warn('[Writer Workbench] Draft storage', error);
+            if (this.persistenceSequence.get(key) === sequence) this.failedPersistence.add(key);
+            if (this.doc === doc && this.persistenceSequence.get(key) === sequence) {
+                this.$('.ww-status').textContent = '本地草稿未保存';
+                this.message(storageMessage(error), true);
+            }
             return false;
-        }
+        } finally { this.pendingPersistence--; }
     }
     rememberUndo(typing = false) {
         const now = Date.now();
@@ -173,7 +212,7 @@ export class Workbench {
         const card = this.bridge.currentCharacter();
         if (!card) throw new Error('请先打开一张角色卡的单人聊天，再打开工作台。');
         this.avatar = card.avatar;
-        this.syncTheme(); this.loadWriting();
+        this.syncTheme(); await this.loadWriting();
         this.$('.ww-character').textContent = card.name;
         this.dialog.showModal();
         await this.run(async () => {
@@ -182,7 +221,7 @@ export class Workbench {
             await this.switchTab('character');
         });
     }
-    close() { this.persist(); this.persistWriting(); this.dialog.close(); }
+    async close() { await Promise.all([this.persist(), this.persistWriting()]); this.dialog.close(); }
     connection() {
         const ctx = this.bridge.context();
         this.$('.ww-api').textContent = `● ${ctx.mainApi || '当前连接'} · ${ctx.onlineStatus === 'no_connection' ? '尚未连接' : '使用酒馆配置'}`;
@@ -195,7 +234,7 @@ export class Workbench {
         } catch { select.append(option('', '跟随酒馆当前设置')); }
     }
     async switchTab(tab) {
-        this.persist();
+        await this.persist();
         this.tab = tab;
         this.dialog.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
         const select = this.$('.ww-resource'); select.replaceChildren();
@@ -220,13 +259,13 @@ export class Workbench {
         catch (error) { this.empty('未能载入，请重试。已有草稿仍然保留。'); throw error; }
     }
     async load(meta) {
-        this.persist();
+        await this.persist();
         const live = await this.bridge.read(meta);
         let doc = this.docs.get(this.key(meta));
         if (!doc) {
-            const raw = localStorage.getItem(this.storageKey(meta));
+            const raw = await this.store.get(this.storageKey(meta));
             if (raw) {
-                try { doc = JSON.parse(raw); if (!doc.base || !doc.draft || this.key(doc.meta) !== this.key(meta)) throw Error(); }
+                try { doc = raw; if (!doc.base || !doc.draft || this.key(doc.meta) !== this.key(meta)) throw Error(); }
                 catch { throw new Error('已有草稿无法读取。为避免覆盖，已停止打开；请先备份浏览器数据。'); }
             }
         }
@@ -242,6 +281,7 @@ export class Workbench {
     empty(text) {
         this.doc = null; this.field = null;
         this.$('.ww-list').replaceChildren(); this.$('.ww-fields').replaceChildren();
+        this.$('.ww-mobile-field').replaceChildren();
         this.$('.ww-title').textContent = '这里还是空的'; this.$('.ww-hint').textContent = text;
         this.editor.value = ''; this.editor.disabled = true; this.$('.ww-add').hidden = true;
         this.$('.ww-status').textContent = '未选择内容';
@@ -257,6 +297,7 @@ export class Workbench {
     }
     renderList(wanted) {
         const fields = this.fields(); const list = this.$('.ww-list'); list.replaceChildren();
+        this.$('.ww-mobile-field').replaceChildren(...fields.map(field => option(field.id, field.title)));
         this.$('.ww-add').hidden = !['greetings', 'world'].includes(this.tab) && !(this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts));
         for (const field of fields) {
             const button = element('button', { type: 'button', 'data-field': field.id }, field.title);
@@ -266,6 +307,7 @@ export class Workbench {
     }
     showField(field) {
         this.field = field;
+        this.$('.ww-mobile-field').value = field?.id || '';
         this.suggestion = null;
         this.savedSelection = [0, 0];
         this.$('[data-action="accept"]').disabled = true; this.$('[data-action="append"]').disabled = true;
@@ -329,7 +371,7 @@ export class Workbench {
     async save() {
         if (!this.doc) throw new Error('请先选择要编辑的内容。');
         this.bridge.assertCharacter(this.avatar);
-        if (!this.persist()) throw new Error('请先导出草稿备份，再释放浏览器存储空间。');
+        await this.persist();
         const live = await this.bridge.read(this.doc.meta);
         const result = mergeThreeWay(this.doc.base, this.doc.draft, live);
         if (result.conflicts.length) {
@@ -344,8 +386,8 @@ export class Workbench {
         await this.bridge.write(this.doc.meta, live, result.value);
         this.doc.base = clone(result.value); this.doc.draft = clone(result.value);
         snapshot(this.doc, '已写入酒馆');
-        this.persist(); this.renderList(this.field?.id); this.connection();
-        this.message('已写入酒馆。'); return true;
+        const backedUp = await this.persist(); this.renderList(this.field?.id); this.connection();
+        this.message(backedUp ? '已写入酒馆。' : '已写入酒馆；本地备份未完成，可以导出一份草稿。', !backedUp); return true;
     }
     add(copy = false) {
         if (!this.doc) return;
@@ -487,7 +529,7 @@ export class Workbench {
             if (action === 'save') await this.save();
             else if (action === 'test') {
                 if (this.doc?.meta.kind !== 'character') throw new Error('请回到人物设定或开场白，保存角色卡后再试聊；世界书和预设请先分别写入。');
-                if (await this.save()) { await this.bridge.testChat(this.avatar); this.close(); }
+                if (await this.save()) { await this.bridge.testChat(this.avatar); await this.close(); }
             } else if (action === 'undo') {
                 const previous = this.doc?.undo?.pop();
                 if (previous) { this.doc.draft = previous; this.doc.lastEdit = 0; this.persist(); this.renderList(this.field?.id); }

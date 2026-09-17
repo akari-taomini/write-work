@@ -75,7 +75,7 @@
 #writer-workbench-launch.menu_button { display:inline-flex; align-items:center; justify-content:center; gap:8px; width:auto; min-width:max-content; max-width:none; height:auto; min-height:40px; padding:8px 12px; flex:0 0 auto; white-space:nowrap; word-break:keep-all; writing-mode:horizontal-tb; }
 #writer-workbench-launch span { flex:0 0 auto; white-space:nowrap; }
 .ww-launch-floating { position:fixed; bottom:85px; right:20px; z-index:1000; width:auto!important; }
-@media(max-width:760px) {
+@media (max-width:760px) {
  .ww { width:100vw; max-width:100vw; height:100dvh; max-height:100dvh; border-radius:0; }
  .ww .ww-header { padding:10px 12px; gap:8px; }
  .ww .ww-brand strong { font-size:1em; }
@@ -102,4 +102,45 @@
  .ww .ww-status { width:100%; }
  .ww .ww-placement { align-items:stretch; }
  .ww .ww-placement label { flex-basis:100%; }
+}
+/* Mobile uses one document flow: theme control heights can no longer push one flex region over another. */
+.ww .ww-mobile-field-label { display:none; }
+.ww .ww-more { min-width:0; }
+.ww .ww-more summary { cursor:pointer; padding:8px; }
+.ww .ww-more>.ww-row { padding-block:8px; }
+.ww .ww-main { min-height:0; }
+.ww .ww-shell>.ww-header,.ww .ww-shell>.ww-connection,.ww .ww-shell>.ww-tabs { flex-shrink:0; }
+@media (max-width:760px), (max-height:500px) {
+ dialog.ww { position:fixed; inset:auto; top:var(--ww-viewport-top,0px); left:0; margin:0; width:100%; max-width:100%; height:var(--ww-viewport-height,100dvh); max-height:var(--ww-viewport-height,100dvh); overflow:hidden; border-radius:0; }
+ dialog.ww .ww-shell { display:block; width:100%; height:100%; overflow-x:hidden; overflow-y:auto; overscroll-behavior:contain; -webkit-overflow-scrolling:touch; padding-bottom:env(safe-area-inset-bottom,0px); }
+ dialog.ww .ww-body { display:block; height:auto; min-height:0; overflow:visible; }
+ dialog.ww .ww-sidebar { display:block; width:100%; height:auto; max-height:none; overflow:visible; border-right:0; padding:10px 12px; }
+ dialog.ww .ww-main { display:block; width:100%; height:auto; min-height:0; overflow:visible; padding:12px; }
+ dialog.ww .ww-main>* { max-width:100%; }
+ dialog.ww .ww-header { flex-wrap:wrap; padding:8px 12px; }
+ dialog.ww .ww-brand { flex:1 1 auto; min-width:0; }
+ dialog.ww .ww-character { max-width:30%; }
+ dialog.ww .ww-connection { display:block; padding:8px 12px; }
+ dialog.ww .ww-api { display:block; margin-bottom:6px; }
+ dialog.ww .ww-connection label,dialog.ww .ww-resource-label,dialog.ww .ww-mobile-field-label { display:grid; grid-template-columns:auto minmax(0,1fr); align-items:center; gap:8px; }
+ dialog.ww .ww-connection select,dialog.ww .ww-resource,dialog.ww .ww-mobile-field { width:100%; min-width:0; max-width:100%; margin:0; text-overflow:ellipsis; }
+ dialog.ww .ww-list { display:none; }
+ dialog.ww .ww-mobile-field-label { margin-block:8px; }
+ dialog.ww .ww-add { width:auto; }
+ dialog.ww .ww-tabs { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:6px; padding:8px 12px; }
+ dialog.ww .ww-tabs button { width:100%; min-width:0; padding:7px 3px; }
+ dialog.ww .ww-editor-heading { flex-wrap:wrap; }
+ dialog.ww .ww-editor-heading>div { min-width:0; overflow-wrap:anywhere; }
+ dialog.ww .ww-fields { display:grid; grid-template-columns:minmax(0,1fr); }
+ dialog.ww .ww-meta-input { display:grid; grid-template-columns:auto minmax(0,1fr); }
+ dialog.ww .ww-meta-input input:not([type="checkbox"]) { width:100%; min-width:0; }
+ dialog.ww .ww-meta-input input[type="checkbox"] { justify-self:start; }
+ dialog.ww .ww-editor { display:block; width:100%; height:clamp(220px,42dvh,460px); min-height:220px; max-height:none; resize:vertical; }
+ dialog.ww .ww-message { display:block; height:auto; max-height:none; overflow:visible; padding-inline:12px; }
+ dialog.ww .ww-footer { position:static; display:block; width:100%; padding:10px 12px; background-color:var(--ww-surface,Canvas); }
+ dialog.ww .ww-status { display:block; margin-bottom:8px; }
+ dialog.ww .ww-primary-actions { display:grid; grid-template-columns:repeat(3,minmax(0,1fr)); gap:6px; }
+ dialog.ww .ww-primary-actions button { width:100%; min-width:0; }
+ dialog.ww .ww-more { margin-top:8px; }
+ dialog.ww .ww-history { position:absolute; inset:0; overflow:auto; }
 }
