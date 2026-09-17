@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { readFileSync } from 'node:fs';
 const { Window } = await import(process.env.WW_DOM_MODULE || 'happy-dom');
 const window = new Window({ url: 'http://localhost:8000/' });
 for (const key of ['window', 'document', 'localStorage', 'Event', 'CustomEvent', 'HTMLElement']) globalThis[key] = window[key];
@@ -32,6 +33,7 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
     function type(text) { app.editor.value = text; app.editor.dispatchEvent(new Event('input')); }
     async function action(name) { await app.click({ target: app.$(`[data-action="${name}"]`) }); }
     type('新的人设');
+    await app.persist();
     assert.equal(JSON.parse(localStorage.getItem(app.storageKey(app.doc.meta))).draft.description, '新的人设');
     await app.run(() => app.switchTab('greetings'));
     assert.equal(app.editor.value, '你好');
@@ -72,12 +74,39 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
     assert.equal(app.doc.draft.personality, '上一份写卡输出');
     assert.notEqual(state.character.personality, '上一份写卡输出');
     await action('undo'); assert.equal(app.doc.draft.personality, '安静');
-    await app.run(() => app.switchTab('character')); type('关闭后恢复'); app.close();
+    await app.run(() => app.switchTab('character')); type('关闭后恢复'); await app.close();
     const second = new Workbench(bridge); await second.open(); assert.equal(second.editor.value, '关闭后恢复');
     assert.equal(second.$('.ww-suggestion').value, '上一份写卡输出');
+    // A failed local backup must not prevent an explicitly requested server save.
+    const originalSet = second.store.set.bind(second.store);
+    second.store.set = async () => { throw new DOMException('quota', 'QuotaExceededError'); };
+    second.doc.draft.description = '仍然可以写入酒馆';
+    assert.equal(await second.save(), true);
+    assert.equal(state.character.description, '仍然可以写入酒馆');
+    assert.ok(second.$('.ww-message').textContent.includes('本地备份未完成'));
+    second.store.set = originalSet;
     active = 'other.png'; await action('save'); assert.notEqual(state.character.description, '关闭后恢复');
-    second.close();
+    await second.close();
     await window.happyDOM.abort();
+});
+test('small mobile viewport has one scrolling shell and non-overlapping flow regions', () => {
+    const style = document.createElement('style');
+    style.textContent = readFileSync(new URL('../style.css', import.meta.url), 'utf8');
+    document.head.append(style);
+    window.happyDOM.setWindowSize({ width: 390, height: 420 });
+    const dialog = document.querySelector('dialog.ww');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-shell')).display, 'block');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-shell')).overflowY, 'auto');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-body')).display, 'block');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-main')).overflow, 'visible');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-footer')).position, 'static');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-list')).display, 'none');
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-mobile-field-label')).display, 'grid');
+    assert.equal(dialog.querySelector('.ww-history').parentElement, dialog);
+    assert.equal(dialog.querySelector('.ww-primary-actions').children.length, 3);
+    window.happyDOM.setWindowSize({ width: 1200, height: 900 });
+    assert.equal(window.getComputedStyle(dialog.querySelector('.ww-body')).display, 'flex');
+    style.remove();
 });
 test('launcher has its own full-width container and uses native theme classes', () => {
     document.body.insertAdjacentHTML('beforeend', '<div id="extensions_settings2"><div id="other-extension"></div></div>');
