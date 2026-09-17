@@ -1,4 +1,18 @@
 export const clone = value => value === undefined ? undefined : structuredClone(value);
+// Remove only alpha; retain the theme's RGB/HSL/wide-gamut color channels.
+export function opaqueThemeColor(color) {
+    const value = color.trim();
+    const hex = value.match(/^#([\da-f]{3,8})$/i);
+    if (hex && hex[1].length === 8) return '#' + hex[1].slice(0, 6);
+    if (hex && hex[1].length === 4) return '#' + hex[1].slice(0, 3);
+    const fn = value.match(/^(rgba?|hsla?)\((.*)\)$/i);
+    if (fn) {
+        const channels = fn[2].includes(',') ? fn[2].split(',').slice(0, 3).join(' ') : fn[2].split('/')[0].trim();
+        return `${fn[1].toLowerCase().startsWith('rgb') ? 'rgb' : 'hsl'}(${channels} / 1)`;
+    }
+    if (/^(color|oklch|oklab|lch|lab)\(/i.test(value)) return value.replace(/\s*\/[^)]*(?=\))/, ' / 1');
+    return value === 'transparent' ? 'Canvas' : value || 'Canvas';
+}
 export function equal(a, b) {
     if (Object.is(a, b)) return true;
     if (!a || !b || typeof a !== 'object' || typeof b !== 'object') return false;

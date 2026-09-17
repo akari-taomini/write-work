@@ -1,5 +1,5 @@
 import { TavernBridge } from './bridge.js';
-import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion } from './core.js';
+import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
 
 const bridge = new TavernBridge();
 let app;
@@ -10,6 +10,8 @@ const element = (tag, attrs = {}, text = '') => {
         else node.setAttribute(key, value);
     }
     node.textContent = text;
+    if (tag === 'button') { node.classList.add('menu_button'); node.type = 'button'; }
+    if (['input', 'textarea'].includes(tag) && attrs.type !== 'checkbox') node.classList.add('text_pole');
     return node;
 };
 const option = (value, label) => element('option', { value }, label);
@@ -47,13 +49,16 @@ export class Workbench {
                 <textarea class="ww-editor" aria-label="正文编辑区" spellcheck="false" placeholder="从这里开始，写下你的角色……"></textarea>
                 <div class="ww-editor-meta"><span class="ww-count">0 字</span><span>Ctrl / ⌘ + S 写入酒馆</span><button data-action="duplicate" hidden>复制条目</button></div>
                 <details class="ww-notes"><summary>创作备注 <small>仅自己可见，不加入角色提示词</small></summary><textarea class="ww-note" aria-label="创作备注" placeholder="灵感、待办、还没想好的伏笔……"></textarea></details>
-                <section class="ww-assistant" hidden aria-label="AI 辅助">
-                  <div class="ww-row"><strong>AI 辅助</strong><small class="ww-ai-scope">选中一段，或修改当前全文</small><button data-action="ai-close" aria-label="收起 AI 辅助">✕</button></div>
+                <section class="ww-assistant" aria-label="写卡与修改">
+                  <div class="ww-row"><strong>写卡与修改</strong><button data-action="ai-close" aria-label="收起写卡与修改">✕</button></div>
                   <p class="ww-help">使用酒馆当前连接、预设和聊天上下文；结果只放在这里，采用后才修改草稿。</p>
+                  <label class="ww-mode-label">这次要做什么<select class="ww-ai-mode" aria-label="写作方式"><option value="current">按意见修改当前栏目（不用选字）</option><option value="write">按写卡预设起草新内容</option><option value="result">继续修改下面的输出稿</option><option value="selection">只修改选中的文字</option></select></label>
                   <div class="ww-row"><button data-action="polish">润色</button><button data-action="expand">扩写</button><button data-action="shorten">精简</button></div>
-                  <div class="ww-row"><input class="ww-instruction" aria-label="修改要求" placeholder="例如：更克制一些，保留细节"><button data-action="generate" class="ww-primary">生成建议</button><button data-action="stop" hidden>停止生成</button></div>
-                  <textarea class="ww-suggestion" aria-label="AI 建议，可继续编辑" placeholder="建议会显示在这里" spellcheck="false"></textarea>
+                  <textarea class="ww-instruction" rows="3" aria-label="写作或修改意见" placeholder="直接写意见，例如：把性格里的冷漠改成慢热，保留其他设定。也可以描述你想写的新角色。"></textarea>
+                  <div class="ww-row"><button data-action="generate" class="ww-primary">按意见生成</button><button data-action="stop" hidden>停止生成</button><button data-action="latest">读取聊天最新回复</button></div>
+                  <textarea class="ww-suggestion" aria-label="写卡输出，可粘贴或继续编辑" placeholder="写卡预设的输出会放在这里，也可以粘贴已有内容。切换栏目后仍会保留。" spellcheck="false"></textarea>
                   <div class="ww-row"><button data-action="accept" disabled>替换原文</button><button data-action="append" disabled>插在后面</button><span class="ww-ai-message" role="status"></span></div>
+                  <div class="ww-placement"><label>放到哪里<select class="ww-destination" aria-label="输出稿目标栏目"></select></label><select class="ww-placement-mode" aria-label="放入方式"><option value="replace">替换该栏正文</option><option value="append">追加到该栏末尾</option></select><button data-action="place">放入该栏草稿</button></div>
                 </section>
               </main>
             </div>
@@ -62,7 +67,17 @@ export class Workbench {
             <section class="ww-history" hidden aria-label="历史版本"><div class="ww-row"><h2>历史版本</h2><button data-action="history-close">返回编辑</button></div><div class="ww-history-list"></div><pre class="ww-history-preview"></pre><button data-action="restore" class="ww-primary" disabled>恢复到草稿</button></section>
           </div>`;
         document.body.append(this.dialog);
+        this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
+        this.dialog.querySelectorAll('textarea,input:not([type="checkbox"])').forEach(node => node.classList.add('text_pole'));
         this.$ = selector => this.dialog.querySelector(selector);
+        this.themeProbe = element('span', { hidden: '' });
+        this.themeProbe.style.backgroundColor = 'var(--SmartThemeBlurTintColor, Canvas)';
+        this.dialog.append(this.themeProbe);
+        this.syncTheme();
+        this.themeObserver = new window.MutationObserver(() => this.syncTheme());
+        this.themeObserver.observe(document.documentElement, { attributes: true, attributeFilter: ['style', 'class'] });
+        this.themeObserver.observe(document.body, { attributes: true, attributeFilter: ['style', 'class'] });
+        this.themeObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
         this.editor = this.$('.ww-editor');
         this.dialog.addEventListener('click', event => this.click(event));
         this.dialog.addEventListener('cancel', event => { event.preventDefault(); if (!this.busy) this.close(); });
@@ -80,6 +95,8 @@ export class Workbench {
             if (this.doc && this.field) { this.doc.scroll ||= {}; this.doc.scroll[this.field.id] = this.editor.scrollTop; }
         });
         this.$('.ww-note').addEventListener('input', event => { this.doc.note = event.target.value; this.persist(); });
+        for (const selector of ['.ww-instruction', '.ww-suggestion']) this.$(selector).addEventListener('input', () => this.persistWriting());
+        this.$('.ww-ai-mode').addEventListener('change', () => this.persistWriting());
         this.$('.ww-import').addEventListener('change', event => {
             const file = event.target.files[0]; event.target.value = '';
             if (file) this.run(() => this.importDraft(file));
@@ -89,7 +106,23 @@ export class Workbench {
             await this.bridge.activatePreset(event.target.value);
             this.connection(); this.message('写作预设已与酒馆同步。');
         }));
-        window.addEventListener('pagehide', () => this.persist());
+        window.addEventListener('pagehide', () => { this.persist(); this.persistWriting(); });
+    }
+    syncTheme() {
+        const color = window.getComputedStyle(this.themeProbe).backgroundColor;
+        this.dialog.style.setProperty('--ww-surface', opaqueThemeColor(color));
+    }
+    writingKey() { return `ww:${this.namespace}:writing:${this.avatar}`; }
+    persistWriting() {
+        if (!this.avatar) return;
+        try { localStorage.setItem(this.writingKey(), JSON.stringify({ instruction: this.$('.ww-instruction').value, output: this.$('.ww-suggestion').value, mode: this.$('.ww-ai-mode').value })); }
+        catch { this.message('写作区未能自动保存，请复制保留输出稿或释放浏览器存储空间。', true); }
+    }
+    loadWriting() {
+        const data = JSON.parse(localStorage.getItem(this.writingKey()) || '{}');
+        this.$('.ww-instruction').value = data.instruction || '';
+        this.$('.ww-suggestion').value = data.output || '';
+        this.$('.ww-ai-mode').value = data.mode || 'current';
     }
     key(meta) { return `${meta.kind}:${meta.api || ''}:${meta.id}`; }
     storageKey(meta) { return `ww:${this.namespace}:${this.key(meta)}`; }
@@ -140,6 +173,7 @@ export class Workbench {
         const card = this.bridge.currentCharacter();
         if (!card) throw new Error('请先打开一张角色卡的单人聊天，再打开工作台。');
         this.avatar = card.avatar;
+        this.syncTheme(); this.loadWriting();
         this.$('.ww-character').textContent = card.name;
         this.dialog.showModal();
         await this.run(async () => {
@@ -148,7 +182,7 @@ export class Workbench {
             await this.switchTab('character');
         });
     }
-    close() { this.persist(); this.dialog.close(); }
+    close() { this.persist(); this.persistWriting(); this.dialog.close(); }
     connection() {
         const ctx = this.bridge.context();
         this.$('.ww-api').textContent = `● ${ctx.mainApi || '当前连接'} · ${ctx.onlineStatus === 'no_connection' ? '尚未连接' : '使用酒馆配置'}`;
@@ -202,7 +236,6 @@ export class Workbench {
         this.doc = doc;
         this.docs.set(this.key(meta), doc);
         this.suggestion = null;
-        this.$('.ww-suggestion').value = '';
         this.$('.ww-note').value = doc.note || '';
         this.renderList(); this.persist();
     }
@@ -237,6 +270,10 @@ export class Workbench {
         this.savedSelection = [0, 0];
         this.$('[data-action="accept"]').disabled = true; this.$('[data-action="append"]').disabled = true;
         this.$('.ww-fields').replaceChildren();
+        const destination = this.$('.ww-destination');
+        destination.replaceChildren();
+        this.fields().filter(f => !f.marker).forEach(f => destination.append(option(f.id, f.title)));
+        if (field && !field.marker) destination.value = field.id;
         if (!field) { this.editor.value = ''; this.editor.disabled = true; this.$('.ww-title').textContent = '暂无可编辑条目'; this.$('.ww-hint').textContent = '可新增条目；参数型预设请在酒馆原面板调整参数。'; return; }
         this.editor.disabled = !!field.marker;
         this.doc.lastField ||= {}; this.doc.lastField[this.tab] = field.id;
@@ -332,10 +369,14 @@ export class Workbench {
         this.persist(); this.renderList(this.field.id);
     }
     async generate(instruction) {
-        if (!this.field || this.field.marker) throw new Error('请先选择可编辑的正文。');
+        const mode = this.$('.ww-ai-mode').value;
+        if (['current', 'selection'].includes(mode) && (!this.field || this.field.marker)) throw new Error('请先选择可编辑的正文，或选择按预设起草。');
         const [a, b] = this.savedSelection;
         const original = this.editor.value;
-        const start = a !== b ? a : 0, end = a !== b ? b : original.length;
+        if (mode === 'selection' && a === b) throw new Error('尚未选中文字。手机上可改用“修改当前栏目”，直接输入意见。');
+        const start = mode === 'selection' ? a : 0, end = mode === 'selection' ? b : original.length;
+        const source = mode === 'result' ? this.$('.ww-suggestion').value : original.slice(start, end);
+        if (mode === 'result' && !source.trim()) throw new Error('下面还没有输出稿，可以先生成或读取聊天最新回复。');
         const request = instruction || this.$('.ww-instruction').value.trim();
         if (!request) throw new Error('先写一句你想怎么改。');
         this.$('.ww-assistant').hidden = false;
@@ -345,11 +386,14 @@ export class Workbench {
         this.$('[data-action="stop"]').hidden = false;
         this.$('[data-action="stop"]').disabled = false;
         try {
-            const prompt = `你现在协助作者编辑角色卡或提示词，而不是继续扮演角色。请按作者要求改写下面的文本，只返回修改后的正文，不加解释或代码围栏。保留 {{user}}、{{char}} 等宏及作者指定格式。\n编辑栏目：${this.field.title}\n作者要求：${request}\n待编辑文本：\n${original.slice(start, end)}`;
+            const prompt = mode === 'write'
+                ? `请按照当前写卡预设的规则、格式和工作流程完成作者的写作要求。\n作者要求：${request}`
+                : `你现在协助作者修改写卡内容，而不是继续角色扮演。请遵循当前写卡预设的格式，按照下面的意见修改原文。只返回完整的修改后正文；作者没有要求修改的部分保持不变，不加解释或代码围栏。保留 {{user}}、{{char}} 等宏。\n编辑对象：${mode === 'result' ? '上一版写卡输出' : this.field.title}\n修改意见：${request}\n原文：\n${source}`;
             const text = await this.bridge.generate(prompt, this.avatar);
-            this.suggestion = { original, start, end, key: this.key(this.doc.meta), field: this.field.id };
+            this.suggestion = ['current', 'selection'].includes(mode) ? { original, start, end, key: this.key(this.doc.meta), field: this.field.id } : null;
             this.$('.ww-suggestion').value = text;
-            this.$('.ww-ai-message').textContent = '建议已就绪，采用后修改草稿。';
+            this.persistWriting();
+            this.$('.ww-ai-message').textContent = '输出已保留。可以继续提修改意见，或选择栏目放入草稿。';
         } catch (error) { this.$('.ww-ai-message').textContent = '未完成生成，可以重试。'; throw error; }
         finally { this.generating = false; this.$('[data-action="stop"]').hidden = true; }
     }
@@ -359,6 +403,25 @@ export class Workbench {
         const next = applySuggestion(this.editor.value, s.original, s.start, s.end, this.$('.ww-suggestion').value, append);
         this.rememberUndo(); writePath(this.doc.draft, this.field.path, next); this.editor.value = next;
         this.suggestion = null; this.persist(); this.count(); this.message('已采用到草稿，可撤回。');
+    }
+    placeOutput() {
+        const field = this.fields().find(f => f.id === this.$('.ww-destination').value && !f.marker);
+        const output = this.$('.ww-suggestion').value;
+        if (!field || !output.trim()) throw new Error('请先准备输出稿，并选择要放入的栏目。');
+        const old = String(readPath(this.doc.draft, field.path) || '');
+        const next = this.$('.ww-placement-mode').value === 'append' && old ? old + '\n\n' + output : output;
+        this.rememberUndo(); snapshot(this.doc, `放入${field.title}之前`);
+        writePath(this.doc.draft, field.path, next);
+        this.persist(); this.renderList(field.id);
+        this.message(`已放入“${field.title}”的草稿，可撤回。写入酒馆后才生效。`);
+    }
+    latestReply() {
+        this.bridge.assertCharacter(this.avatar);
+        const reply = [...(this.bridge.context().chat || [])].reverse().find(m => !m.is_user && !m.is_system && typeof m.mes === 'string' && m.mes.trim());
+        if (!reply) throw new Error('当前聊天里没有可读取的 AI 回复。');
+        this.$('.ww-suggestion').value = reply.mes;
+        this.$('.ww-ai-mode').value = 'result'; this.suggestion = null;
+        this.persistWriting(); this.message('已读取聊天最新回复，可直接提修改意见，再放入对应栏目。');
     }
     history() {
         if (!this.doc) return;
@@ -412,7 +475,11 @@ export class Workbench {
         }
         const action = button.dataset.action;
         if (action === 'close') { this.close(); return; }
-        if (action === 'ai' || action === 'ai-close') { this.$('.ww-assistant').hidden = action === 'ai-close' || !this.$('.ww-assistant').hidden; return; }
+        if (action === 'ai' || action === 'ai-close') {
+            this.$('.ww-assistant').hidden = action === 'ai-close';
+            if (action === 'ai') { this.$('.ww-assistant').scrollIntoView?.({ block: 'start', behavior: 'smooth' }); this.$('.ww-instruction').focus({ preventScroll: true }); }
+            return;
+        }
         if (action === 'search') { this.$('.ww-search').hidden = !this.$('.ww-search').hidden; return; }
         if (action === 'history-close') { this.$('.ww-history').hidden = true; return; }
         if (action === 'import') { this.$('.ww-import').click(); return; }
@@ -430,6 +497,8 @@ export class Workbench {
             else if (action === 'add' || action === 'duplicate') this.add(action === 'duplicate');
             else if (action === 'up' || action === 'down') this.move(action === 'up' ? -1 : 1);
             else if (action === 'generate') await this.generate();
+            else if (action === 'place') this.placeOutput();
+            else if (action === 'latest') this.latestReply();
             else if (action === 'polish') await this.generate('润色语言，让表达自然准确，保留设定与原有格式。');
             else if (action === 'expand') await this.generate('适度扩写，补充可用于角色扮演的具体细节，保留设定与原有格式。');
             else if (action === 'shorten') await this.generate('精简重复表达，保留关键信息与原有格式。');
@@ -459,12 +528,15 @@ export class Workbench {
     }
 }
 
-function install() {
+export function install() {
     if (document.getElementById('writer-workbench-launch')) return;
-    const launch = element('button', { id: 'writer-workbench-launch', type: 'button', class: 'menu_button', title: '打开写卡工作台' }, '✎ 写卡工作台');
+    const launch = element('button', { id: 'writer-workbench-launch', type: 'button', class: 'menu_button', title: '打开写卡工作台' });
+    launch.append(element('span', { class: 'fa-solid fa-pen-to-square', 'aria-hidden': 'true' }), element('span', {}, '写卡工作台'));
+    const wrapper = element('div', { id: 'writer-workbench-settings', class: 'extension_container' });
+    wrapper.append(launch);
     const target = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
-    (target || document.body).append(launch);
-    if (!target) launch.classList.add('ww-launch-floating');
+    (target || document.body).append(wrapper);
+    if (!target) wrapper.classList.add('ww-launch-floating');
     const open = async () => {
         try { app ||= new Workbench(); if (!app.dialog.open) await app.open(); }
         catch (error) { globalThis.toastr?.error(error.message, '写卡工作台'); console.error(error); }
