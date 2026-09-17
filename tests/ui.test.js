@@ -74,19 +74,92 @@ test('editing, draft recovery, save failure, conflicts, AI and resource switchin
     assert.equal(app.doc.draft.personality, '上一份写卡输出');
     assert.notEqual(state.character.personality, '上一份写卡输出');
     await action('undo'); assert.equal(app.doc.draft.personality, '安静');
-    await app.run(() => app.switchTab('character')); type('关闭后恢复'); await app.close();
+    await app.run(() => app.switchTab('character')); type('关闭后恢复');
+    assert.equal(await app.close(), false);
+    assert.ok(app.dialog.open); assert.equal(app.$('.ww-exit').hidden, false);
+    assert.ok(app.$('.ww-exit-message').textContent.includes('已保存在本地草稿'));
+    await action('exit-cancel'); assert.equal(app.$('.ww-exit').hidden, true); assert.ok(app.dialog.open);
+    await app.close(); await action('exit-confirm'); assert.equal(app.dialog.open, false);
     const second = new Workbench(bridge); await second.open(); assert.equal(second.editor.value, '关闭后恢复');
     assert.equal(second.$('.ww-suggestion').value, '上一份写卡输出');
     // A failed local backup must not prevent an explicitly requested server save.
     const originalSet = second.store.set.bind(second.store);
     second.store.set = async () => { throw new DOMException('quota', 'QuotaExceededError'); };
     second.doc.draft.description = '仍然可以写入酒馆';
+    assert.equal(await second.close(), false);
+    assert.ok(second.$('.ww-exit-message').textContent.includes('本地备份未成功'));
+    second.cancelExit();
     assert.equal(await second.save(), true);
     assert.equal(state.character.description, '仍然可以写入酒馆');
     assert.ok(second.$('.ww-message').textContent.includes('本地备份未完成'));
     second.store.set = originalSet;
     active = 'other.png'; await action('save'); assert.notEqual(state.character.description, '关闭后恢复');
     await second.close();
+    await window.happyDOM.abort();
+});
+
+test('preset search, batch transfer, relative insertion, world creation and exit reminders', async () => {
+    const books = new Map([['原世界', { entries: {
+        0: { uid: 0, comment: 'A', content: 'a', displayIndex: 0, order: 900 },
+        1: { uid: 1, comment: 'B', content: 'b', displayIndex: 1, order: 10 },
+    } }]]);
+    const preset = { prompts: [
+        { identifier: 'a', name: '人物', content: '海边 城市', role: 'system' },
+        { identifier: 'b', name: '文风', content: '克制', role: 'system' },
+    ], prompt_order: [{ character_id: 100001, order: [{ identifier: 'a', enabled: true }, { identifier: 'b', enabled: false }] }] };
+    const bridge = {
+        context: () => ({ accountStorage: localStorage, mainApi: 'openai' }),
+        currentCharacter: () => ({ avatar: 'features.png', name: '测试' }),
+        getCharacter: async () => ({ name: '测试' }), assertCharacter: () => {},
+        presets: () => ({ api: 'openai', current: '功能测试', names: ['功能测试', '目标预设'] }),
+        worlds: async () => [...books.keys()],
+        createWorld: async name => { books.set(name, { entries: {} }); return name; },
+        read: async meta => clone(meta.kind === 'world' ? books.get(meta.id) : meta.kind === 'preset' ? preset : characterContent({})),
+    };
+    const app = new Workbench(bridge); await app.open();
+    const action = name => app.click({ target: app.$(`[data-action="${name}"]`) });
+    await app.switchTab('preset');
+    app.editor.value = '海边 城市 新改动'; app.editor.dispatchEvent(new Event('input'));
+    app.editor.setSelectionRange(2, 4);
+    app.$('.ww-filter').value = '海边 新改动'; app.$('.ww-filter').dispatchEvent(new Event('input'));
+    assert.equal(app.$('.ww-list').children.length, 1);
+    assert.equal(app.editor.selectionStart, 2);
+    await action('select-visible');
+    app.$('.ww-filter').value = '文风'; app.$('.ww-filter').dispatchEvent(new Event('input'));
+    assert.ok(app.selectedPrompts.has('a'));
+    await action('select-visible'); assert.equal(app.selectedPrompts.size, 2);
+    let exported;
+    app.downloadJson = data => { exported = clone(data); };
+    await action('export-prompts'); assert.equal(exported.prompts.length, 2);
+    await app.loadResource('目标预设');
+    app.$('.ww-anchor').value = 'b'; app.$('.ww-anchor-side').value = 'before';
+    await app.importPrompts({ size: 100, text: async () => JSON.stringify(exported) });
+    assert.equal(app.doc.draft.prompts.length, 4);
+    assert.equal(app.doc.draft.prompts[0].content, '海边 城市');
+    assert.equal(app.doc.draft.prompts[2].content, '海边 城市 新改动');
+    assert.equal(app.doc.draft.prompt_order[0].order[2].enabled, false);
+    await action('undo'); assert.equal(app.doc.draft.prompts.length, 2);
+    app.showField(app.fields().find(f => f.id === 'b'));
+    app.$('.ww-anchor').value = 'a'; app.$('.ww-anchor-side').value = 'before';
+    await action('move-to'); assert.equal(app.fields()[0].id, 'b');
+    assert.equal(app.editor.value, '克制');
+    await action('insert-new'); assert.equal(app.fields()[0].id, app.field.id);
+    await action('undo'); assert.equal(app.doc.draft.prompts.length, 2);
+    await app.switchTab('world');
+    app.showField(app.fields().find(f => f.id === '1'));
+    app.$('.ww-anchor').value = '0'; app.$('.ww-anchor-side').value = 'before';
+    await action('move-to'); assert.equal(app.fields()[0].id, '1');
+    assert.equal(app.doc.draft.entries[0].order, 900); assert.equal(app.doc.draft.entries[1].order, 10);
+    app.$('.ww-world-name').value = '新世界'; await action('create-world');
+    assert.equal(app.doc.meta.id, '新世界'); assert.deepEqual(app.doc.draft.entries, {});
+    await action('add'); assert.equal(Object.keys(app.doc.draft.entries).length, 1);
+    await app.persist();
+    const unload = new Event('beforeunload', { cancelable: true }); window.dispatchEvent(unload);
+    assert.equal(unload.defaultPrevented, true);
+    assert.equal(await app.close(), false);
+    assert.ok(app.$('.ww-exit-list').textContent.includes('功能测试'));
+    assert.ok(app.$('.ww-exit-list').textContent.includes('原世界'));
+    await action('exit-confirm'); assert.equal(app.dialog.open, false);
     await window.happyDOM.abort();
 });
 test('small mobile viewport has one scrolling shell and non-overlapping flow regions', () => {
