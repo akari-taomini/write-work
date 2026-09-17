@@ -70,6 +70,17 @@
 .ww .ww-history>.ww-row { justify-content:space-between; }
 .ww .ww-history-list { display:flex; gap:8px; flex-wrap:wrap; max-height:150px; overflow:auto; }
 .ww .ww-history-preview { white-space:pre-wrap; overflow:auto; flex:1; padding:16px; font:inherit; line-height:1.8; user-select:text; }
+.ww .ww-exit { position:absolute; inset:0; z-index:4; display:flex; flex-direction:column; gap:12px; padding:22px; overflow:auto; background:var(--ww-surface,Canvas)!important; opacity:1!important; }
+.ww .ww-exit-list { overflow-wrap:anywhere; }
+.ww .ww-sidebar details { margin-block:10px; }
+.ww .ww-sidebar summary { cursor:pointer; overflow-wrap:anywhere; }
+.ww .ww-filter-label,.ww .ww-preset-group-label,.ww .ww-insert-tools label { display:block; margin-block:8px; }
+.ww .ww-sidebar select,.ww .ww-sidebar input:not([type="checkbox"]) { display:block; width:100%; margin-block:6px; }
+.ww .ww-sidebar details>.ww-row { margin-block:8px; }
+.ww .ww-batch-list { max-height:240px; overflow:auto; margin-block:8px; }
+.ww .ww-batch-item { display:flex; align-items:flex-start; gap:8px; padding-block:6px; }
+.ww .ww-batch-item input { flex:none; margin-top:4px; }
+.ww .ww-batch-item span { min-width:0; overflow-wrap:anywhere; }
 /* Reserve a full extension row; native menu_button icon widths must not squeeze the label. */
 #writer-workbench-settings { width:100%; min-width:0; flex:1 0 100%; grid-column:1 / -1; }
 #writer-workbench-launch.menu_button { display:inline-flex; align-items:center; justify-content:center; gap:8px; width:auto; min-width:max-content; max-width:none; height:auto; min-height:40px; padding:8px 12px; flex:0 0 auto; white-space:nowrap; word-break:keep-all; writing-mode:horizontal-tb; }

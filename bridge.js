@@ -20,9 +20,19 @@ export class TavernBridge {
     }
     async getCharacter(avatar) { return (await this.post('/api/characters/get', { avatar_url: avatar })).json(); }
     async worlds() {
-        const names = this.context().getWorldInfoNames?.();
-        if (names) return names;
         return (await (await this.post('/api/worldinfo/list', {})).json()).map(x => x.file_id);
+    }
+    async createWorld(input) {
+        const name = input.trim();
+        if (!name || /[<>:"/\\|?*\x00-\x1f]/.test(name) || /[. ]$/.test(name) || /^(con|prn|aux|nul|com\d|lpt\d)(\.|$)/i.test(name)) throw new Error('请填写有效的世界书名称，不含斜杠、冒号等文件名符号。');
+        const all = await (await this.post('/api/worldinfo/list', {})).json();
+        if (all.some(book => book.file_id.toLocaleLowerCase() === name.toLocaleLowerCase())) throw new Error('已经有同名世界书，请换个名字；原世界书不会被覆盖。');
+        const data = { entries: {} };
+        await this.post('/api/worldinfo/edit', { name, data });
+        await this.context().updateWorldInfoList?.();
+        const saved = await (await this.post('/api/worldinfo/get', { name })).json();
+        if (!saved?.entries) throw new Error('世界书未能验证保存，请刷新世界书列表后检查。');
+        return name;
     }
     manager(api) {
         const manager = this.context().getPresetManager?.(api);

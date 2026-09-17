@@ -1,5 +1,6 @@
 import { TavernBridge } from './bridge.js';
 import { DraftStore, storageMessage } from './storage.js';
+import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
 import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
 
 const bridge = new TavernBridge();
@@ -28,6 +29,8 @@ export class Workbench {
         this.tab = 'character';
         this.busy = false;
         this.savedSelection = [0, 0];
+        this.selectedPrompts = new Set();
+        this.presetGroupIndex = 0;
         const ctx = adapter.context();
         if (!ctx.accountStorage) throw new Error('需要支持账号存储的 SillyTavern 版本，请先更新酒馆。');
         this.namespace = ctx.accountStorage.getItem('writer-workbench-browser-key');
@@ -46,7 +49,14 @@ export class Workbench {
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
             <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button></nav>
             <div class="ww-body">
-              <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label><div class="ww-list"></div><label class="ww-mobile-field-label">当前栏目<select class="ww-mobile-field" aria-label="当前栏目或世界书条目"></select></label><button data-action="add" class="ww-add">＋ 新增</button></aside>
+              <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label>
+                <details class="ww-new-world" hidden><summary>＋ 新建世界书</summary><input class="ww-world-name text_pole" aria-label="新世界书名称" placeholder="给新世界书起个名字"><button data-action="create-world">创建并开始编辑</button><small>创建后可写条目；绑定角色仍在酒馆中设置。</small></details>
+                <label class="ww-preset-group-label" hidden>预设组<select class="ww-preset-group" aria-label="编辑的预设组"></select></label>
+                <label class="ww-filter-label">搜索条目<input class="ww-filter text_pole" type="search" placeholder="搜标题或正文" aria-label="搜索条目标题或正文"></label><small class="ww-filter-count" aria-live="polite"></small>
+                <details class="ww-batch" hidden><summary>多选导出 / 导入条目</summary><div class="ww-row"><button data-action="select-visible">全选搜索结果</button><button data-action="clear-selection">清空勾选</button></div><div class="ww-batch-list"></div><span class="ww-selected-count"></span><div class="ww-row"><button data-action="export-prompts">导出勾选条目</button><button data-action="import-prompts">导入条目包</button></div><small>导入到所选预设组，位置使用下面的“指定位置”；不会覆盖已有条目。</small><input class="ww-prompt-file" type="file" accept=".json,application/json" hidden></details>
+                <div class="ww-list"></div><label class="ww-mobile-field-label">当前栏目<select class="ww-mobile-field" aria-label="当前栏目或世界书条目"></select></label><button data-action="add" class="ww-add">＋ 新增</button>
+                <details class="ww-insert-tools" hidden><summary>指定位置 / 中间插入</summary><label>目标条目<select class="ww-anchor" aria-label="插入位置的目标条目"></select></label><label>位置<select class="ww-anchor-side" aria-label="插在目标之前或之后"><option value="after">在它后面</option><option value="before">在它前面</option></select></label><div class="ww-row"><button data-action="insert-new">在此处新建</button><button data-action="move-to">将当前条目移到此处</button></div><small class="ww-order-help"></small></details>
+              </aside>
               <main class="ww-main">
                 <div class="ww-editor-heading"><div><h2 class="ww-title">开始写作</h2><small class="ww-hint"></small></div><button data-action="search" title="查找与替换">查找替换</button></div>
                 <div class="ww-search" hidden><input class="ww-find" placeholder="查找文字" aria-label="查找文字"><input class="ww-replace" placeholder="替换为" aria-label="替换文字"><button data-action="find">查找下一个</button><button data-action="replace">全部替换</button></div>
@@ -70,6 +80,7 @@ export class Workbench {
             <div class="ww-message" role="status" aria-live="polite"></div>
             <footer class="ww-footer"><span class="ww-status">准备就绪</span><div class="ww-row ww-primary-actions"><button data-action="save" class="ww-primary">写入酒馆</button><button data-action="ai">✧ AI 辅助</button><button data-action="export">导出草稿</button></div><details class="ww-more"><summary>更多操作</summary><div class="ww-row"><button data-action="undo">撤回</button><button data-action="history">历史版本</button><button data-action="import">导入草稿</button><button data-action="test">保存并新开试聊</button></div></details><input class="ww-import" type="file" accept=".json,application/json" hidden></footer>
             <section class="ww-history" hidden aria-label="历史版本"><div class="ww-row"><h2>历史版本</h2><button data-action="history-close">返回编辑</button></div><div class="ww-history-list"></div><pre class="ww-history-preview"></pre><button data-action="restore" class="ww-primary" disabled>恢复到草稿</button></section>
+            <section class="ww-exit" hidden role="alertdialog" aria-modal="true" aria-label="退出前检查草稿"><h2>还有内容没写入酒馆</h2><p class="ww-exit-message"></p><ul class="ww-exit-list"></ul><div class="ww-row"><button data-action="exit-cancel" class="ww-primary">返回继续编辑</button><button data-action="exit-confirm">保留本地草稿并退出</button></div></section>
           </div>`;
         document.body.append(this.dialog);
         this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
@@ -77,6 +88,7 @@ export class Workbench {
         this.$ = selector => this.dialog.querySelector(selector);
         // Keep the history overlay outside the scrolling shell.
         this.dialog.append(this.$('.ww-history'));
+        this.dialog.append(this.$('.ww-exit'));
         const fitViewport = () => {
             const viewport = window.visualViewport;
             this.dialog.style.setProperty('--ww-viewport-height', `${viewport?.height || window.innerHeight}px`);
@@ -96,7 +108,7 @@ export class Workbench {
         this.themeObserver.observe(document.head, { childList: true, subtree: true, characterData: true });
         this.editor = this.$('.ww-editor');
         this.dialog.addEventListener('click', event => this.click(event));
-        this.dialog.addEventListener('cancel', event => { event.preventDefault(); if (!this.busy) this.close(); });
+        this.dialog.addEventListener('cancel', event => { event.preventDefault(); if (!this.$('.ww-exit').hidden) this.cancelExit(); else if (!this.busy) this.close(); });
         this.dialog.addEventListener('keydown', event => {
             if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); this.run(() => this.save()); }
         });
@@ -118,6 +130,12 @@ export class Workbench {
             if (file) this.run(() => this.importDraft(file));
         });
         this.$('.ww-resource').addEventListener('change', event => this.run(() => this.loadResource(event.target.value)));
+        this.$('.ww-filter').addEventListener('input', () => this.renderList(undefined, true));
+        this.$('.ww-preset-group').addEventListener('change', event => { this.presetGroupIndex = Number(event.target.value); this.renderList(this.field?.id); });
+        this.$('.ww-prompt-file').addEventListener('change', event => {
+            const file = event.target.files[0]; event.target.value = '';
+            if (file) this.run(() => this.importPrompts(file));
+        });
         this.$('.ww-mobile-field').addEventListener('change', event => {
             if (this.busy) return;
             this.persist(); this.showField(this.fields().find(field => field.id === event.target.value));
@@ -128,7 +146,7 @@ export class Workbench {
         }));
         window.addEventListener('pagehide', () => { this.persist(); this.persistWriting(); });
         window.addEventListener('beforeunload', event => {
-            if (this.pendingPersistence || this.failedPersistence.size) { event.preventDefault(); event.returnValue = ''; }
+            if (this.pendingPersistence || this.failedPersistence.size || this.unwrittenDocuments().length) { event.preventDefault(); event.returnValue = ''; }
         });
     }
     syncTheme() {
@@ -171,16 +189,15 @@ export class Workbench {
             this.$('.ww-note').disabled = !this.doc;
         }
     }
-    async persist() {
-        if (!this.doc) return true;
-        const doc = this.doc;
+    async persist(doc = this.doc) {
+        if (!doc) return true;
         doc.updated = new Date().toISOString();
         const key = this.storageKey(doc.meta);
         const sequence = (this.persistenceSequence.get(key) || 0) + 1;
         this.persistenceSequence.set(key, sequence);
         this.pendingPersistence++;
         const clean = equal(doc.base, doc.draft);
-        this.$('.ww-status').textContent = '正在保存草稿…';
+        if (this.doc === doc) this.$('.ww-status').textContent = '正在保存草稿…';
         try {
             const { undo, lastEdit, ...stored } = doc;
             await this.store.set(key, stored);
@@ -221,7 +238,26 @@ export class Workbench {
             await this.switchTab('character');
         });
     }
-    async close() { await Promise.all([this.persist(), this.persistWriting()]); this.dialog.close(); }
+    unwrittenDocuments() { return [...this.docs.values()].filter(doc => !equal(doc.base, doc.draft)); }
+    async close({ confirmed = false } = {}) {
+        await Promise.all([...this.docs.values()].map(doc => this.persist(doc)).concat(this.persistWriting()));
+        const dirty = this.unwrittenDocuments();
+        if (!confirmed && (dirty.length || this.failedPersistence.size)) {
+            this.$('.ww-exit-list').replaceChildren(...dirty.map(doc => element('li', {}, `${doc.meta.kind === 'world' ? '世界书' : doc.meta.kind === 'preset' ? '预设' : '角色卡'}：${doc.meta.title || doc.meta.id}`)));
+            const failed = this.failedPersistence.size > 0;
+            this.$('.ww-exit-message').textContent = failed ? '有本地备份未成功。建议返回编辑，先导出或写入酒馆；现在退出后，未备份的内容可能在刷新时丢失。' : '这些修改已保存在本地草稿，但还没有写入酒馆。可以返回保存，也可以保留草稿，下次继续。';
+            this.$('[data-action="exit-confirm"]').textContent = failed ? '仍要退出（未备份）' : '保留本地草稿并退出';
+            this.$('.ww-exit').hidden = false;
+            this.$('.ww-shell').inert = true;
+            this.$('[data-action="exit-cancel"]').focus();
+            return false;
+        }
+        this.cancelExit(); this.dialog.close(); return true;
+    }
+    cancelExit() {
+        this.$('.ww-exit').hidden = true;
+        this.$('.ww-shell').inert = false;
+    }
     connection() {
         const ctx = this.bridge.context();
         this.$('.ww-api').textContent = `● ${ctx.mainApi || '当前连接'} · ${ctx.onlineStatus === 'no_connection' ? '尚未连接' : '使用酒馆配置'}`;
@@ -236,6 +272,7 @@ export class Workbench {
     async switchTab(tab) {
         await this.persist();
         this.tab = tab;
+        this.$('.ww-new-world').hidden = tab !== 'world';
         this.dialog.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
         const select = this.$('.ww-resource'); select.replaceChildren();
         this.$('.ww-resource-label').hidden = ['character', 'greetings'].includes(tab);
@@ -244,7 +281,7 @@ export class Workbench {
             names.forEach(name => select.append(option(name, name)));
             const linked = this.fullCard.data?.extensions?.world;
             if (names.includes(linked)) select.value = linked;
-            if (!names.length) { this.empty('还没有世界书。请在酒馆新建一本后，再打开这里。'); return; }
+            if (!names.length) { this.empty('还没有世界书。点击上面的“新建世界书”即可开始。'); return; }
             await this.loadResource(select.value);
         } else if (tab === 'preset') {
             const p = this.bridge.presets();
@@ -273,6 +310,8 @@ export class Workbench {
         else if (equal(doc.base, doc.draft)) { doc.base = clone(live); doc.draft = clone(live); }
         else if (!equal(doc.base, live)) this.message('恢复了上次草稿。酒馆原内容也有变化，写入前会检查冲突。');
         this.doc = doc;
+        this.selectedPrompts.clear(); this.$('.ww-filter').value = '';
+        this.presetGroupIndex = Math.max(0, doc.draft.prompt_order?.findIndex(g => Number(g.character_id) === 100001) ?? 0);
         this.docs.set(this.key(meta), doc);
         this.suggestion = null;
         this.$('.ww-note').value = doc.note || '';
@@ -282,6 +321,7 @@ export class Workbench {
         this.doc = null; this.field = null;
         this.$('.ww-list').replaceChildren(); this.$('.ww-fields').replaceChildren();
         this.$('.ww-mobile-field').replaceChildren();
+        this.$('.ww-batch').hidden = true; this.$('.ww-insert-tools').hidden = true; this.$('.ww-preset-group-label').hidden = true;
         this.$('.ww-title').textContent = '这里还是空的'; this.$('.ww-hint').textContent = text;
         this.editor.value = ''; this.editor.disabled = true; this.$('.ww-add').hidden = true;
         this.$('.ww-status').textContent = '未选择内容';
@@ -292,19 +332,48 @@ export class Workbench {
         if (this.tab === 'character') return CHARACTER_FIELDS.filter(([k]) => k !== 'first_mes').map(([key, title]) => ({ id: key, title, path: [key] }));
         if (this.tab === 'greetings') return [{ id: 'first_mes', title: '第一条开场白', path: ['first_mes'] }, ...d.alternate_greetings.map((_, i) => ({ id: `alt-${i}`, title: `备选开场白 ${i + 1}`, path: ['alternate_greetings', i] }))];
         if (this.tab === 'world') return Object.entries(d.entries || {}).sort((a, b) => (a[1].displayIndex ?? +a[0]) - (b[1].displayIndex ?? +b[0])).map(([id, entry]) => ({ id, title: entry.comment || entry.key?.join('、') || `条目 ${id}`, path: ['entries', id, 'content'] }));
-        if (Array.isArray(d.prompts)) return d.prompts.map((p, i) => ({ id: p.identifier || String(i), title: p.name || '未命名提示词', path: ['prompts', i, 'content'], marker: p.marker }));
+        if (Array.isArray(d.prompts)) {
+            const order = d.prompt_order?.[this.presetGroupIndex]?.order || [];
+            const rank = id => { const n = order.findIndex(p => p.identifier === id); return n < 0 ? order.length : n; };
+            return d.prompts.map((p, i) => ({ id: p.identifier || String(i), title: p.name || '未命名提示词', path: ['prompts', i, 'content'], marker: p.marker })).sort((a, b) => rank(a.id) - rank(b.id));
+        }
         return Object.entries(d).filter(([k, v]) => typeof v === 'string' && /prompt|preamble|content|sequence|suffix|prefix/i.test(k)).map(([key]) => ({ id: key, title: key, path: [key] }));
     }
-    renderList(wanted) {
-        const fields = this.fields(); const list = this.$('.ww-list'); list.replaceChildren();
-        this.$('.ww-mobile-field').replaceChildren(...fields.map(field => option(field.id, field.title)));
+    visibleFields() {
+        const terms = this.$('.ww-filter').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
+        return this.fields().filter(field => terms.every(term => `${field.title}\n${readPath(this.doc.draft, field.path) || ''}`.toLocaleLowerCase().includes(term)));
+    }
+    renderList(wanted, filterOnly = false) {
+        const fields = this.fields(), visible = this.visibleFields(); const list = this.$('.ww-list'); list.replaceChildren();
+        this.$('.ww-filter-count').textContent = `找到 ${visible.length} / ${fields.length} 条`;
+        this.$('.ww-mobile-field').replaceChildren(...visible.map(field => option(field.id, field.title)));
+        const isPreset = this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts);
+        this.$('.ww-batch').hidden = !isPreset;
+        this.$('.ww-preset-group-label').hidden = !isPreset;
+        this.$('.ww-insert-tools').hidden = !(isPreset || this.tab === 'world') || !this.doc;
+        const group = this.$('.ww-preset-group');
+        group.replaceChildren(...(this.doc?.draft.prompt_order || []).map((g, i) => option(i, Number(g.character_id) === 100001 ? '角色聊天组' : Number(g.character_id) === 100000 ? '默认预设组' : `预设组 ${i + 1}`)));
+        group.value = String(this.presetGroupIndex);
+        this.$('.ww-order-help').textContent = isPreset ? '移动调整所选预设组的提示词顺序；定深条目仍受自身位置和深度设置控制。' : '这里只整理列表显示顺序，不改变模型注入顺序；后者使用“注入顺序”设置。';
+        this.selectedPrompts = new Set([...this.selectedPrompts].filter(id => fields.some(f => f.id === id && !f.marker)));
+        const batch = this.$('.ww-batch-list'); batch.replaceChildren();
+        if (isPreset) for (const field of visible.filter(f => !f.marker)) {
+            const label = element('label', { class: 'ww-batch-item' });
+            const check = element('input', { type: 'checkbox', 'aria-label': `选择 ${field.title}` }); check.checked = this.selectedPrompts.has(field.id);
+            check.addEventListener('change', () => { check.checked ? this.selectedPrompts.add(field.id) : this.selectedPrompts.delete(field.id); this.updateSelectedCount(); });
+            label.append(check, element('span', {}, field.title)); batch.append(label);
+        }
+        this.updateSelectedCount();
         this.$('.ww-add').hidden = !['greetings', 'world'].includes(this.tab) && !(this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts));
-        for (const field of fields) {
+        for (const field of visible) {
             const button = element('button', { type: 'button', 'data-field': field.id }, field.title);
+            button.classList.toggle('ww-active', field.id === this.field?.id);
             list.append(button);
         }
+        if (filterOnly) { this.$('.ww-mobile-field').value = this.field?.id || ''; return; }
         this.showField(fields.find(f => f.id === wanted || (!wanted && f.id === this.doc?.lastField?.[this.tab])) || fields[0]);
     }
+    updateSelectedCount() { this.$('.ww-selected-count').textContent = `已勾选 ${this.selectedPrompts.size} 条（包含被搜索隐藏的勾选项）`; }
     showField(field) {
         this.field = field;
         this.$('.ww-mobile-field').value = field?.id || '';
@@ -312,6 +381,11 @@ export class Workbench {
         this.savedSelection = [0, 0];
         this.$('[data-action="accept"]').disabled = true; this.$('[data-action="append"]').disabled = true;
         this.$('.ww-fields').replaceChildren();
+        const anchor = this.$('.ww-anchor');
+        const orderedIds = this.doc?.draft.prompt_order?.[this.presetGroupIndex]?.order?.map(p => p.identifier);
+        const targets = this.fields().filter(f => this.tab !== 'preset' || orderedIds?.includes(f.id));
+        anchor.replaceChildren(option('', '列表末尾'), ...targets.map(f => option(f.id, f.title)));
+        anchor.value = targets.some(f => f.id === field?.id) ? field.id : '';
         const destination = this.$('.ww-destination');
         destination.replaceChildren();
         this.fields().filter(f => !f.marker).forEach(f => destination.append(option(f.id, f.title)));
@@ -331,9 +405,9 @@ export class Workbench {
             this.metaInput('关键词（逗号分隔）', ['entries', field.id, 'key'], 'array');
             this.metaInput('停用', ['entries', field.id, 'disable'], 'checkbox');
             this.metaInput('常驻', ['entries', field.id, 'constant'], 'checkbox');
-            this.metaInput('插入顺序', ['entries', field.id, 'order'], 'number');
+            this.metaInput('注入顺序（不是列表位置）', ['entries', field.id, 'order'], 'number');
             const row = element('div', { class: 'ww-row' });
-            row.append(element('button', { 'data-action': 'up' }, '↑ 上移'), element('button', { 'data-action': 'down' }, '↓ 下移'));
+            row.append(element('small', {}, '列表位置只影响整理，可在“指定位置”中直接移动或插入。'));
             this.$('.ww-fields').append(row);
         } else if (this.tab === 'preset' && field.path[0] === 'prompts') {
             if (!field.marker) {
@@ -391,24 +465,69 @@ export class Workbench {
     }
     add(copy = false) {
         if (!this.doc) return;
+        if (this.tab === 'preset' && !this.doc.draft.prompt_order?.[this.presetGroupIndex]) throw new Error('请先选择有效的预设组。');
         this.rememberUndo(); let wanted;
         if (this.tab === 'greetings') { this.doc.draft.alternate_greetings.push(''); wanted = `alt-${this.doc.draft.alternate_greetings.length - 1}`; }
         else if (this.tab === 'world') wanted = String(newEntry(this.doc.draft.entries, copy ? this.doc.draft.entries[this.field.id] : null));
         else if (this.tab === 'preset' && Array.isArray(this.doc.draft.prompts)) {
             const id = crypto.randomUUID();
             this.doc.draft.prompts.push({ identifier: id, name: '新提示词', role: 'system', content: '', system_prompt: false, marker: false, injection_position: 0, injection_depth: 4, forbid_overrides: false });
-            for (const order of this.doc.draft.prompt_order || []) order.order.push({ identifier: id, enabled: true });
+            this.doc.draft.prompt_order[this.presetGroupIndex].order.push({ identifier: id, enabled: true });
             wanted = id;
         }
         this.persist(); this.renderList(wanted);
+        return wanted;
     }
-    move(direction) {
-        if (this.tab !== 'world') return;
-        const fields = this.fields(); const index = fields.findIndex(x => x.id === this.field.id); const target = index + direction;
-        if (target < 0 || target >= fields.length) return;
-        this.rememberUndo(); [fields[index], fields[target]] = [fields[target], fields[index]];
-        fields.forEach((f, i) => { this.doc.draft.entries[f.id].displayIndex = i; });
-        this.persist(); this.renderList(this.field.id);
+    relocate(id, anchor, side, remember = true) {
+        if (!id || id === anchor) return;
+        const next = clone(this.doc.draft);
+        if (this.tab === 'world') {
+            const ids = this.fields().map(f => f.id).filter(key => key !== id);
+            insertRelative(ids, [id], anchor, side, key => key).forEach((key, i) => { next.entries[key].displayIndex = i; });
+        } else if (this.tab === 'preset') movePrompt(next, id, anchor, side, this.presetGroupIndex);
+        else return;
+        if (remember) this.rememberUndo();
+        this.doc.draft = next;
+        this.persist(); this.renderList(id);
+    }
+    insertNew() {
+        const anchor = this.$('.ww-anchor').value, side = this.$('.ww-anchor-side').value;
+        this.$('.ww-filter').value = '';
+        const id = this.add();
+        this.relocate(id, anchor, side, false);
+    }
+    async createWorld() {
+        await this.persist();
+        const name = await this.bridge.createWorld(this.$('.ww-world-name').value);
+        this.$('.ww-world-name').value = '';
+        await this.switchTab('world');
+        this.$('.ww-resource').value = name;
+        await this.loadResource(name);
+        this.$('.ww-new-world').open = false;
+        this.message(`已新建世界书“${name}”，可以新增条目。需要绑定角色时，请在酒馆中选择这本世界书。`);
+    }
+    downloadJson(payload, suffix) {
+        const name = (this.doc.meta.title || this.doc.meta.id).replace(/[\\/:*?"<>|]/g, '_');
+        const link = element('a', { download: `${name}-${suffix}.json`, href: URL.createObjectURL(new Blob([JSON.stringify(payload, null, 2)], { type: 'application/json' })) });
+        link.click(); setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+    exportPrompts() {
+        this.downloadJson(exportPromptPack(this.doc.draft, this.selectedPrompts, this.presetGroupIndex), '预设条目包');
+    }
+    async importPrompts(file) {
+        if (this.tab !== 'preset' || !Array.isArray(this.doc?.draft.prompts)) throw new Error('请先打开目标聊天补全预设。');
+        if (file.size > 20 * 1024 * 1024) throw new Error('条目包过大，限 20 MB。');
+        const pack = JSON.parse(await file.text(), (key, value) => {
+            if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('条目包含不支持的字段名。');
+            return value;
+        });
+        const result = importPromptPack(this.doc.draft, pack, { groupIndex: this.presetGroupIndex, anchor: this.$('.ww-anchor').value, side: this.$('.ww-anchor-side').value });
+        snapshot(this.doc, '导入条目包前'); this.rememberUndo();
+        this.doc.draft = result.value;
+        this.selectedPrompts = new Set(result.ids);
+        this.$('.ww-filter').value = '';
+        await this.persist(); this.renderList(result.ids[0]);
+        this.message(`已将 ${result.ids.length} 个条目作为新副本插入当前预设组，可撤回；写入酒馆后生效。`);
     }
     async generate(instruction) {
         const mode = this.$('.ww-ai-mode').value;
@@ -516,7 +635,9 @@ export class Workbench {
             this.$('[data-action="restore"]').disabled = false; return;
         }
         const action = button.dataset.action;
-        if (action === 'close') { this.close(); return; }
+        if (action === 'close') return this.close();
+        if (action === 'exit-cancel') { this.cancelExit(); return; }
+        if (action === 'exit-confirm') return this.close({ confirmed: true });
         if (action === 'ai' || action === 'ai-close') {
             this.$('.ww-assistant').hidden = action === 'ai-close';
             if (action === 'ai') { this.$('.ww-assistant').scrollIntoView?.({ block: 'start', behavior: 'smooth' }); this.$('.ww-instruction').focus({ preventScroll: true }); }
@@ -525,6 +646,7 @@ export class Workbench {
         if (action === 'search') { this.$('.ww-search').hidden = !this.$('.ww-search').hidden; return; }
         if (action === 'history-close') { this.$('.ww-history').hidden = true; return; }
         if (action === 'import') { this.$('.ww-import').click(); return; }
+        if (action === 'import-prompts') { this.$('.ww-prompt-file').click(); return; }
         await this.run(async () => {
             if (action === 'save') await this.save();
             else if (action === 'test') {
@@ -536,8 +658,16 @@ export class Workbench {
                 else this.message('没有可撤回的操作；更早的保存可在历史版本中恢复。');
             } else if (action === 'history') this.history();
             else if (action === 'export') this.exportDraft();
+            else if (action === 'export-prompts') this.exportPrompts();
+            else if (action === 'select-visible' || action === 'clear-selection') {
+                if (action === 'clear-selection') this.selectedPrompts.clear();
+                else this.visibleFields().filter(f => !f.marker).forEach(f => this.selectedPrompts.add(f.id));
+                this.renderList(this.field?.id, true);
+            }
+            else if (action === 'create-world') await this.createWorld();
+            else if (action === 'insert-new') this.insertNew();
+            else if (action === 'move-to') this.relocate(this.field?.id, this.$('.ww-anchor').value, this.$('.ww-anchor-side').value);
             else if (action === 'add' || action === 'duplicate') this.add(action === 'duplicate');
-            else if (action === 'up' || action === 'down') this.move(action === 'up' ? -1 : 1);
             else if (action === 'generate') await this.generate();
             else if (action === 'place') this.placeOutput();
             else if (action === 'latest') this.latestReply();
