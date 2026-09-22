@@ -64,7 +64,7 @@ test('generation uses existing Tavern pipeline and no independent credentials', 
     bridge.context = () => ({ characters: [{ avatar: 'x.png' }], characterId: 0, onlineStatus: 'connected', generateQuietPrompt: async a => { args = a; return 'answer'; } });
     assert.equal(await bridge.generate('edit this', 'x.png'), 'answer');
     assert.deepEqual(args, { quietPrompt: 'edit this', skipWIAN: false, quietToLoud: false });
-    await assert.rejects(bridge.generate('edit this', 'other.png'), /角色已变更/);
+    await assert.rejects(bridge.generate('edit this', 'other.png'), /角色卡已不存在/);
 });
 test('active chat preset reads native prompt changes without storing connection secrets', async () => {
     const bridge = new TavernBridge();
@@ -78,6 +78,7 @@ test('world save is verified against the server before success is reported', asy
     const bridge = new TavernBridge(); let immediate;
     bridge.context = () => ({ saveWorldInfo: async (name, data, now) => { immediate = now; } });
     bridge.read = async () => ({ entries: {} });
+    bridge.worlds = async () => ['Lore'];
     await assert.rejects(bridge.write({ kind: 'world', id: 'Lore' }, { entries: {} }, { entries: { 0: { content: 'new' } } }), /未能完整保存/);
     assert.equal(immediate, true);
 });

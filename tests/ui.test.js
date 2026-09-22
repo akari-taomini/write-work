@@ -226,3 +226,56 @@ test('launcher has its own full-width container and uses native theme classes', 
     assert.equal(button.querySelector('span:last-child').textContent, '写卡工作台');
     assert.ok(button.classList.contains('menu_button'));
 });
+
+test('unbound entry, searchable independent target, scoped regex preview and minimize keep chat separate', async () => {
+    const storeData = new Map(), account = new Map();
+    const store = { get: async key => clone(storeData.get(key)), set: async (key, value) => storeData.set(key, clone(value)) };
+    const ctx = { accountStorage: { getItem: k => account.get(k), setItem: (k, v) => account.set(k, v) }, mainApi: 'openai', name1: '读者' };
+    let current = null, lastWrite, worldFail = false, lastPrompt;
+    const cards = [{ avatar: 'independent-a.png', name: '聊天A' }, { avatar: 'independent-b.png', name: '编辑B' }];
+    const state = {
+        'independent-a.png': { character: characterContent({ data: { description: 'A设定' } }), regex: { scripts: [] } },
+        'independent-b.png': { character: characterContent({ data: { description: 'B设定' } }), regex: { scripts: [] } },
+    };
+    const bridge = {
+        context: () => ctx, characters: () => cards, currentCharacter: () => current,
+        getCharacter: async avatar => ({ name: cards.find(c => c.avatar === avatar).name, data: {} }),
+        presets: () => ({ api: 'openai', current: '写作', names: ['写作'] }),
+        worlds: async () => { if (worldFail) throw Error('列表加载失败：404'); return ['旧书', '海港设定']; },
+        read: async meta => clone(meta.kind === 'world' ? { entries: {} } : state[meta.id][meta.kind]),
+        write: async (meta, live, next) => { lastWrite = clone(meta); state[meta.id][meta.kind] = clone(next); },
+        generate: async prompt => { lastPrompt = prompt; return '<div>修改后的状态栏</div>'; },
+    };
+    const app = new Workbench(bridge, store);
+    const action = name => app.click({ target: app.$(`[data-action="${name}"]`) });
+    await app.open(); assert.equal(app.avatar, null); assert.equal(app.doc, null); assert.ok(app.dialog.open);
+    app.$('.ww-card-search').value = '编辑B'; app.$('.ww-card-search').dispatchEvent(new Event('input'));
+    assert.equal(app.$('.ww-card-select').options.length, 2);
+    app.$('.ww-card-select').value = 'independent-b.png'; await action('bind-card');
+    assert.equal(app.editor.value, 'B设定'); assert.equal(current, null);
+    current = cards[0];
+    app.editor.value = '修改B'; app.editor.dispatchEvent(new Event('input')); await action('save');
+    assert.equal(lastWrite.id, 'independent-b.png'); assert.equal(state['independent-a.png'].character.description, 'A设定');
+    await app.switchTab('regex'); await action('add');
+    assert.equal(app.doc.meta.kind, 'regex'); assert.equal(app.doc.meta.id, 'independent-b.png');
+    app.$('.ww-preview-mode').value = 'html';
+    app.editor.value = '<style>div{color:red}</style><div>测试</div>'; app.editor.dispatchEvent(new Event('input'));
+    await action('preview-refresh');
+    assert.equal(app.$('.ww-preview-frame').getAttribute('sandbox'), '');
+    assert.ok(app.$('.ww-preview-frame').srcdoc.includes('<div>测试</div>'));
+    app.$('.ww-instruction').value = '改成两列，保留宏'; await action('generate');
+    assert.ok(lastPrompt.includes('局部正则的替换 HTML')); assert.ok(lastPrompt.includes('编辑B'));
+    assert.equal(app.editor.value, '<style>div{color:red}</style><div>测试</div>');
+    await action('accept'); assert.equal(app.editor.value, '<div>修改后的状态栏</div>');
+    await action('save'); assert.equal(lastWrite.kind, 'regex');
+    await action('delete-entry'); await action('undo'); assert.equal(app.doc.draft.scripts.length, 1);
+    await action('minimize'); assert.equal(app.dialog.open, false); assert.equal(app.resumeButton.hidden, false);
+    await app.open(); assert.equal(app.avatar, 'independent-b.png'); assert.equal(app.tab, 'regex'); assert.equal(current.avatar, 'independent-a.png');
+    await app.switchTab('world');
+    app.$('.ww-resource-search').value = '海港'; app.$('.ww-resource-search').dispatchEvent(new Event('input'));
+    assert.equal(app.$('.ww-resource').options.length, 2);
+    worldFail = true; await action('refresh-resources');
+    assert.ok(app.$('.ww-message').textContent.includes('404')); assert.equal(app.$('.ww-new-world').hidden, false);
+    assert.equal(app.$('.ww-resource-tools').hidden, false);
+    await app.close({ confirmed: true }); await window.happyDOM.abort();
+});
