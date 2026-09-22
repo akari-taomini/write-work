@@ -1,5 +1,6 @@
 import { TavernBridge } from './bridge.js';
 import { searchRanges, highlightText } from './search.js';
+import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
 import { DraftStore, storageMessage } from './storage.js';
 import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
 import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
@@ -32,6 +33,7 @@ export class Workbench {
         this.savedSelection = [0, 0];
         this.selectedPrompts = new Set();
         this.presetGroupIndex = 0;
+        this.regexRunner = new RegexRunner(); this.previewSequence = 0;
         const ctx = adapter.context();
         if (!ctx.accountStorage) throw new Error('需要支持账号存储的 SillyTavern 版本，请先更新酒馆。');
         this.namespace = ctx.accountStorage.getItem('writer-workbench-browser-key');
@@ -45,12 +47,15 @@ export class Workbench {
             <header class="ww-header">
               <div class="ww-brand"><span class="ww-mark">✎</span><div><strong>写卡工作台</strong><small>把时间留给故事</small></div></div>
               <span class="ww-character"></span>
+              <button data-action="minimize">收起 / 继续聊天</button>
               <button type="button" data-action="close" aria-label="关闭工作台">✕</button>
             </header>
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
-            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button></nav>
+            <details class="ww-binding"><summary>绑定编辑角色卡（不切换聊天）</summary><div class="ww-row"><input class="ww-card-search text_pole" type="search" placeholder="搜索角色名或文件名" aria-label="搜索要编辑的角色卡"><select class="ww-card-select" aria-label="要绑定的角色卡"></select><button data-action="bind-card">绑定这张卡</button></div><small class="ww-bound-info"></small></details>
+            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button></nav>
             <div class="ww-body">
               <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label>
+                <div class="ww-resource-tools" hidden><input class="ww-resource-search text_pole" type="search" placeholder="搜索世界书 / 预设名称" aria-label="搜索世界书或预设"><button data-action="refresh-resources">刷新列表</button></div>
                 <details class="ww-new-world" hidden><summary>＋ 新建世界书</summary><input class="ww-world-name text_pole" aria-label="新世界书名称" placeholder="给新世界书起个名字"><button data-action="create-world">创建并开始编辑</button><small>创建后可写条目；绑定角色仍在酒馆中设置。</small></details>
                 <label class="ww-preset-group-label" hidden>预设组<select class="ww-preset-group" aria-label="编辑的预设组"></select></label>
                 <label class="ww-filter-label">搜索条目<input class="ww-filter text_pole" type="search" placeholder="搜标题或正文" aria-label="搜索条目标题或正文"></label><small class="ww-filter-count" aria-live="polite"></small>
@@ -65,6 +70,7 @@ export class Workbench {
                 <div class="ww-hit-nav" hidden><span class="ww-hit-count" role="status"></span><button data-action="hit-prev">上一个</button><button data-action="hit-next">下一个</button></div>
                 <div class="ww-editor-wrap"><textarea class="ww-editor" aria-label="正文编辑区" spellcheck="false" placeholder="从这里开始，写下你的角色……"></textarea><div class="ww-highlight-viewport" aria-hidden="true"><div class="ww-highlight-text"></div></div></div>
                 <div class="ww-editor-meta"><span class="ww-count">0 字</span><span>Ctrl / ⌘ + S 写入酒馆</span><button data-action="duplicate" hidden>复制条目</button><button data-action="delete-entry" hidden>删除当前条目</button></div>
+                <section class="ww-regex-preview" hidden aria-label="状态栏实时预览"><h2>HTML 实时预览</h2><div class="ww-row"><label>预览方式<select class="ww-preview-mode"><option value="regex">用测试文本运行当前正则</option><option value="html">直接预览 HTML</option></select></label><label>宽度<select class="ww-preview-width"><option value="100%">跟随窗口</option><option value="375px">手机 375px</option><option value="768px">平板 768px</option></select></label><button data-action="preview-refresh">刷新预览</button><button data-action="preview-advice">按意见修改代码</button></div><label>测试文本（仅供预览）<textarea class="ww-regex-test" rows="3" aria-label="正则测试文本"></textarea></label><p class="ww-preview-status" role="status"></p><div class="ww-preview-frame-wrap"><iframe class="ww-preview-frame" title="状态栏 HTML 预览" sandbox="" referrerpolicy="no-referrer"></iframe></div><details><summary>查看替换后的 HTML</summary><pre class="ww-preview-source"></pre></details><small>预览当前单条正则的替换结果；不模拟聊天深度与触发位置。支持 HTML/CSS，不执行脚本，不提供酒馆助手变量接口；基本宏支持 {{char}} / {{user}}，其他宏需用实际值测试。AI 根据代码和你的描述修改，不会自动看见预览画面。</small></section>
                 <details class="ww-notes"><summary>创作备注 <small>仅自己可见，不加入角色提示词</small></summary><textarea class="ww-note" aria-label="创作备注" placeholder="灵感、待办、还没想好的伏笔……"></textarea></details>
                 <section class="ww-assistant" aria-label="写卡与修改">
                   <div class="ww-row"><strong>写卡与修改</strong><button data-action="ai-close" aria-label="收起写卡与修改">✕</button></div>
@@ -85,6 +91,9 @@ export class Workbench {
             <section class="ww-exit" hidden role="alertdialog" aria-modal="true" aria-label="退出前检查草稿"><h2>还有内容没写入酒馆</h2><p class="ww-exit-message"></p><ul class="ww-exit-list"></ul><div class="ww-row"><button data-action="exit-cancel" class="ww-primary">返回继续编辑</button><button data-action="exit-confirm">保留本地草稿并退出</button><button data-action="exit-discard">不保存并退出</button></div><small>不保存并退出：放弃以上对象尚未写入的修改，恢复酒馆当前内容；本地备注和 AI 输出仍保留，已经写入酒馆的内容不会撤销。</small><p class="ww-exit-error" role="alert"></p></section>
           </div>`;
         document.body.append(this.dialog);
+        this.resumeButton = element('button', { class: 'ww-resume menu_button', hidden: '' }, '继续写卡');
+        document.body.append(this.resumeButton);
+        this.resumeButton.addEventListener('click', () => this.open());
         this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
         this.dialog.querySelectorAll('textarea,input:not([type="checkbox"])').forEach(node => node.classList.add('text_pole'));
         this.$ = selector => this.dialog.querySelector(selector);
@@ -141,6 +150,14 @@ export class Workbench {
             if (file) this.run(() => this.importDraft(file));
         });
         this.$('.ww-resource').addEventListener('change', event => this.run(() => this.loadResource(event.target.value)));
+        this.$('.ww-card-search').addEventListener('input', () => this.renderCardChoices());
+        this.$('.ww-resource-search').addEventListener('input', () => this.renderResourceChoices());
+        this.$('.ww-regex-test').addEventListener('input', () => {
+            if (this.doc?.meta.kind !== 'regex') return;
+            this.doc.previewTest = this.$('.ww-regex-test').value; this.persist(); this.schedulePreview();
+        });
+        this.$('.ww-preview-mode').addEventListener('change', () => this.schedulePreview());
+        this.$('.ww-preview-width').addEventListener('change', () => { this.$('.ww-preview-frame').style.width = this.$('.ww-preview-width').value; });
         this.$('.ww-filter').addEventListener('input', () => { this.searchSource = 'filter'; this.renderList(undefined, true); this.updateHighlights(); });
         this.$('.ww-find').addEventListener('input', () => { this.searchSource = 'find'; this.updateHighlights(); });
         this.$('.ww-find').addEventListener('focus', () => { this.searchSource = 'find'; this.updateHighlights(); });
@@ -167,9 +184,9 @@ export class Workbench {
         this.dialog.style.setProperty('--ww-surface', opaqueThemeColor(color));
         if (this.editor) this.syncHighlights();
     }
-    writingKey() { return `ww:${this.namespace}:writing:${this.avatar}`; }
+    writingKey() { return `ww:${this.namespace}:writing:${this.avatar || '_unbound'}`; }
     async persistWriting() {
-        if (!this.avatar) return;
+        if (!this.writingLoaded) return;
         const key = this.writingKey();
         this.pendingPersistence++;
         try { await this.store.set(key, { instruction: this.$('.ww-instruction').value, output: this.$('.ww-suggestion').value, mode: this.$('.ww-ai-mode').value }); this.failedPersistence.delete(key); }
@@ -181,6 +198,7 @@ export class Workbench {
         this.$('.ww-instruction').value = data.instruction || '';
         this.$('.ww-suggestion').value = data.output || '';
         this.$('.ww-ai-mode').value = data.mode || 'current';
+        this.writingLoaded = true;
     }
     key(meta) { return `${meta.kind}:${meta.api || ''}:${meta.id}`; }
     storageKey(meta) { return `ww:${this.namespace}:${this.key(meta)}`; }
@@ -241,24 +259,51 @@ export class Workbench {
         this.doc.lastEdit = typing ? now : 0;
     }
     async open() {
-        const card = this.bridge.currentCharacter();
-        if (!card) throw new Error('请先打开一张角色卡的单人聊天，再打开工作台。');
-        this.avatar = card.avatar;
-        this.syncTheme(); await this.loadWriting();
-        this.$('.ww-character').textContent = card.name;
-        this.dialog.showModal();
+        if (this.minimized) {
+            this.minimized = false; this.resumeButton.hidden = true; this.syncTheme(); this.dialog.show(); this.renderCardChoices(); this.schedulePreview(); return;
+        }
+        this.syncTheme(); this.dialog.show(); this.renderCardChoices();
         await this.run(async () => {
             this.connection();
-            this.fullCard = await this.bridge.getCharacter(this.avatar);
-            await this.switchTab('character');
+            const saved = this.bridge.context().accountStorage.getItem('writer-workbench-target');
+            const candidates = this.cardChoices();
+            const target = [this.avatar, saved, this.bridge.currentCharacter()?.avatar].find(id => candidates.some(c => c.avatar === id));
+            if (target) await this.bindTarget(target);
+            else { this.avatar = null; this.fullCard = {}; await this.loadWriting(); this.updateBinding(); await this.switchTab('character'); this.$('.ww-binding').open = true; }
         });
+    }
+    cardChoices() { return this.bridge.characters?.() || [this.bridge.currentCharacter()].filter(Boolean); }
+    renderCardChoices() {
+        const select = this.$('.ww-card-select'), previous = select.value;
+        const query = this.$('.ww-card-search').value.trim().toLocaleLowerCase();
+        const cards = this.cardChoices().filter(c => `${c.name} ${c.avatar}`.toLocaleLowerCase().includes(query));
+        select.replaceChildren(option('', cards.length ? '选择编辑目标' : '没有匹配的角色卡'), ...cards.map(c => option(c.avatar, `${c.name} · ${c.avatar}`)));
+        select.value = cards.some(c => c.avatar === previous) ? previous : cards.some(c => c.avatar === this.avatar) ? this.avatar : '';
+    }
+    updateBinding() {
+        this.$('.ww-character').textContent = this.avatar ? `编辑：${this.fullCard.name || this.avatar}` : '尚未绑定角色卡';
+        this.$('.ww-bound-info').textContent = this.avatar ? `写入目标：${this.fullCard.name || this.avatar}（${this.avatar}）。切换聊天不会改变此目标。` : '可先搜索并绑定角色卡；未绑定时仍能编辑世界书与预设。';
+        this.$('[data-action="save"]').title = this.avatar ? `将当前草稿写入所选对象；角色目标为 ${this.fullCard.name || this.avatar}` : '将当前草稿写入所选对象';
+    }
+    async bindTarget(avatar) {
+        if (!avatar) throw new Error('请先搜索并选择要绑定的角色卡。');
+        await this.persist(); await this.persistWriting();
+        const full = await this.bridge.getCharacter(avatar);
+        this.avatar = avatar; this.fullCard = full;
+        try { this.bridge.context().accountStorage.setItem('writer-workbench-target', avatar); } catch { /* Selection can stay in memory. */ }
+        await this.loadWriting(); this.updateBinding(); this.renderCardChoices();
+        await this.switchTab(['world', 'preset'].includes(this.tab) ? this.tab : this.tab === 'regex' ? 'regex' : 'character');
+    }
+    async minimize() {
+        await this.persist(); await this.persistWriting();
+        this.minimized = true; this.cancelPreview(); this.dialog.close(); this.resumeButton.hidden = false;
     }
     unwrittenDocuments() { return [...this.docs.values()].filter(doc => !equal(doc.base, doc.draft)); }
     async close({ confirmed = false } = {}) {
         await Promise.all([...this.docs.values()].map(doc => this.persist(doc)).concat(this.persistWriting()));
         const dirty = this.unwrittenDocuments();
         if (!confirmed && (dirty.length || this.failedPersistence.size)) {
-            this.$('.ww-exit-list').replaceChildren(...dirty.map(doc => element('li', {}, `${doc.meta.kind === 'world' ? '世界书' : doc.meta.kind === 'preset' ? '预设' : '角色卡'}：${doc.meta.title || doc.meta.id}`)));
+            this.$('.ww-exit-list').replaceChildren(...dirty.map(doc => element('li', {}, `${doc.meta.kind === 'world' ? '世界书' : doc.meta.kind === 'preset' ? '预设' : doc.meta.kind === 'regex' ? '局部正则' : '角色卡'}：${doc.meta.title || doc.meta.id}`)));
             const failed = this.failedPersistence.size > 0;
             this.$('.ww-exit-message').textContent = failed ? '有本地备份未成功。建议返回编辑，先导出或写入酒馆；现在退出后，未备份的内容可能在刷新时丢失。' : '这些修改已保存在本地草稿，但还没有写入酒馆。可以返回保存，也可以保留草稿，下次继续。';
             this.$('[data-action="exit-confirm"]').textContent = failed ? '仍要退出（未备份）' : '保留本地草稿并退出';
@@ -268,7 +313,7 @@ export class Workbench {
             this.$('[data-action="exit-cancel"]').focus();
             return false;
         }
-        this.cancelExit(); this.dialog.close(); return true;
+        this.cancelExit(); this.cancelPreview(); this.resumeButton.hidden = true; this.dialog.close(); return true;
     }
     cancelExit() {
         this.$('.ww-exit').hidden = true;
@@ -289,7 +334,7 @@ export class Workbench {
             }
             await this.persistWriting();
             if (this.failedPersistence.size) throw new Error('仍有本地备份失败，请返回检查。');
-            this.renderList(); this.cancelExit(); this.dialog.close();
+            this.renderList(); this.cancelExit(); this.cancelPreview(); this.resumeButton.hidden = true; this.dialog.close();
         } catch (error) {
             this.$('.ww-exit-error').textContent = `未能完成退出：${error.message}。已恢复成功的对象不再列为未保存；其余草稿仍保留，可重试或返回编辑。`;
             this.renderList();
@@ -308,27 +353,43 @@ export class Workbench {
     }
     async switchTab(tab) {
         await this.persist();
+        this.cancelPreview();
         this.tab = tab;
+        this.$('.ww-regex-preview').hidden = tab !== 'regex';
         this.$('.ww-new-world').hidden = tab !== 'world';
         this.dialog.querySelectorAll('[data-tab]').forEach(b => b.setAttribute('aria-selected', String(b.dataset.tab === tab)));
         const select = this.$('.ww-resource'); select.replaceChildren();
-        this.$('.ww-resource-label').hidden = ['character', 'greetings'].includes(tab);
+        this.$('.ww-resource-label').hidden = !['world', 'preset'].includes(tab);
+        this.$('.ww-resource-tools').hidden = !['world', 'preset'].includes(tab);
+        this.$('.ww-resource-search').value = ''; this.resourceNames = [];
         try { if (tab === 'world') {
             const names = await this.bridge.worlds();
+            this.resourceNames = names;
             names.forEach(name => select.append(option(name, name)));
-            const linked = this.fullCard.data?.extensions?.world;
+            const linked = this.fullCard?.data?.extensions?.world;
             if (names.includes(linked)) select.value = linked;
             if (!names.length) { this.empty('还没有世界书。点击上面的“新建世界书”即可开始。'); return; }
             await this.loadResource(select.value);
+            if (this.bridge.worldWarning) this.message(this.bridge.worldWarning, true);
         } else if (tab === 'preset') {
             const p = this.bridge.presets();
+            this.resourceNames = p.names;
             p.names.forEach(name => select.append(option(name, name))); select.value = p.current;
             if (!p.names.length) { this.empty('当前连接没有已保存的预设。'); return; }
             await this.loadResource(select.value);
-        } else await this.load({ kind: 'character', id: this.avatar, title: this.fullCard.name });
+        } else if (!this.avatar) this.empty('请在上方“绑定编辑角色卡”中搜索并选择一张卡，无需切换当前聊天。');
+        else await this.load({ kind: tab === 'regex' ? 'regex' : 'character', id: this.avatar, title: this.fullCard.name || this.avatar });
         } catch (error) { this.empty('未能载入，请重试。已有草稿仍然保留。'); throw error; }
     }
+    renderResourceChoices() {
+        const query = this.$('.ww-resource-search').value.trim().toLocaleLowerCase();
+        const select = this.$('.ww-resource'), current = this.doc?.meta.id;
+        const names = (this.resourceNames || []).filter(name => name.toLocaleLowerCase().includes(query));
+        select.replaceChildren(option('', names.length ? '请选择编辑对象' : '没有匹配结果'), ...names.map(name => option(name, name)));
+        select.value = names.includes(current) ? current : '';
+    }
     async loadResource(id) {
+        if (!id) return;
         try { await this.load({ kind: this.tab, id, title: id, ...(this.tab === 'preset' ? { api: this.bridge.presets().api } : {}) }); }
         catch (error) { this.empty('未能载入，请重试。已有草稿仍然保留。'); throw error; }
     }
@@ -365,12 +426,14 @@ export class Workbench {
         this.$('[data-action="duplicate"]').hidden = true;
         this.count();
         this.$('.ww-status').textContent = '未选择内容';
+        this.cancelPreview(); this.$('.ww-preview-frame').srcdoc = '';
     }
     fields() {
         if (!this.doc) return [];
         const d = this.doc.draft;
         if (this.tab === 'character') return CHARACTER_FIELDS.filter(([k]) => k !== 'first_mes').map(([key, title]) => ({ id: key, title, path: [key] }));
         if (this.tab === 'greetings') return [{ id: 'first_mes', title: '第一条开场白', path: ['first_mes'] }, ...d.alternate_greetings.map((_, i) => ({ id: `alt-${i}`, title: `备选开场白 ${i + 1}`, path: ['alternate_greetings', i] }))];
+        if (this.tab === 'regex') return d.scripts.map((script, i) => ({ id: script.id || `regex-${i}`, title: script.scriptName || `正则 ${i + 1}`, path: ['scripts', i, 'replaceString'] }));
         if (this.tab === 'world') return Object.entries(d.entries || {}).sort((a, b) => (a[1].displayIndex ?? +a[0]) - (b[1].displayIndex ?? +b[0])).map(([id, entry]) => ({ id, title: entry.comment || entry.key?.join('、') || `条目 ${id}`, path: ['entries', id, 'content'] }));
         if (Array.isArray(d.prompts)) {
             const order = d.prompt_order?.[this.presetGroupIndex]?.order || [];
@@ -381,7 +444,7 @@ export class Workbench {
     }
     visibleFields() {
         const terms = this.$('.ww-filter').value.trim().toLocaleLowerCase().split(/\s+/).filter(Boolean);
-        return this.fields().filter(field => terms.every(term => `${field.title}\n${readPath(this.doc.draft, field.path) || ''}`.toLocaleLowerCase().includes(term)));
+        return this.fields().filter(field => terms.every(term => `${field.title}\n${readPath(this.doc.draft, field.path) || ''}\n${this.tab === 'regex' ? this.doc.draft.scripts[field.path[1]].findRegex || '' : ''}`.toLocaleLowerCase().includes(term)));
     }
     renderList(wanted, filterOnly = false) {
         const fields = this.fields(), visible = this.visibleFields(); const list = this.$('.ww-list'); list.replaceChildren();
@@ -404,7 +467,7 @@ export class Workbench {
             label.append(check, element('span', {}, field.title)); batch.append(label);
         }
         this.updateSelectedCount();
-        this.$('.ww-add').hidden = !['greetings', 'world'].includes(this.tab) && !(this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts));
+        this.$('.ww-add').hidden = !this.doc || (!['greetings', 'world', 'regex'].includes(this.tab) && !(this.tab === 'preset' && Array.isArray(this.doc?.draft.prompts)));
         for (const field of visible) {
             const button = element('button', { type: 'button', 'data-field': field.id }, field.title);
             highlightText(button, field.title, searchRanges(field.title, this.$('.ww-filter').value.trim().split(/\s+/)));
@@ -418,7 +481,7 @@ export class Workbench {
     showField(field) {
         this.field = field;
         this.$('[data-action="delete-entry"]').hidden = !this.canDelete(field);
-        this.$('[data-action="duplicate"]').hidden = this.tab !== 'world' || !field;
+        this.$('[data-action="duplicate"]').hidden = !['world', 'regex'].includes(this.tab) || !field;
         this.$('.ww-mobile-field').value = field?.id || '';
         this.suggestion = null;
         this.savedSelection = [0, 0];
@@ -442,7 +505,7 @@ export class Workbench {
         this.editor.value = String(readPath(this.doc.draft, field.path) ?? '');
         this.editor.scrollTop = this.doc.scroll?.[field.id] || 0;
         this.dialog.querySelectorAll('[data-field]').forEach(b => b.classList.toggle('ww-active', b.dataset.field === field.id));
-        this.$('[data-action="duplicate"]').hidden = this.tab !== 'world';
+        this.$('[data-action="duplicate"]').hidden = !['world', 'regex'].includes(this.tab);
         if (this.tab === 'world') {
             this.metaInput('条目标题', ['entries', field.id, 'comment']);
             this.metaInput('关键词（逗号分隔）', ['entries', field.id, 'key'], 'array');
@@ -452,6 +515,39 @@ export class Workbench {
             const row = element('div', { class: 'ww-row' });
             row.append(element('small', {}, '列表位置只影响整理，可在“指定位置”中直接移动或插入。'));
             this.$('.ww-fields').append(row);
+        } else if (this.tab === 'regex') {
+            const path = ['scripts', field.path[1]];
+            this.metaInput('正则名称', [...path, 'scriptName']);
+            this.metaInput('查找表达式', [...path, 'findRegex']);
+            this.metaInput('停用', [...path, 'disabled'], 'checkbox');
+            this.metaInput('仅显示格式', [...path, 'markdownOnly'], 'checkbox');
+            this.metaInput('仅提示词', [...path, 'promptOnly'], 'checkbox');
+            this.metaInput('编辑时运行', [...path, 'runOnEdit'], 'checkbox');
+            this.metaInput('最小深度（留空不限）', [...path, 'minDepth'], 'nullable-number');
+            this.metaInput('最大深度（留空不限）', [...path, 'maxDepth'], 'nullable-number');
+            const script = this.doc.draft.scripts[field.path[1]];
+            const placement = element('div', { class: 'ww-row' });
+            for (const [value, title] of [[1, '用户输入'], [2, 'AI 输出'], [3, '快捷命令'], [5, '世界书'], [6, '推理']]) {
+                const label = element('label', {}, title), check = element('input', { type: 'checkbox' });
+                check.checked = (script.placement || []).includes(value);
+                check.addEventListener('change', () => { this.rememberUndo(); script.placement = check.checked ? [...new Set([...(script.placement || []), value])] : (script.placement || []).filter(p => p !== value); this.persist(); });
+                label.prepend(check); placement.append(label);
+            }
+            this.$('.ww-fields').append(placement);
+            const macroLabel = element('label', { class: 'ww-meta-input' }, '查找表达式宏替换');
+            const macroSelect = element('select', { 'aria-label': '查找表达式宏替换' });
+            [[0, '不替换'], [1, '原样替换'], [2, '转义后替换']].forEach(([value, name]) => macroSelect.append(option(value, name)));
+            macroSelect.value = String(script.substituteRegex || 0);
+            macroSelect.addEventListener('change', () => { this.rememberUndo(); script.substituteRegex = Number(macroSelect.value); this.persist(); this.schedulePreview(); });
+            macroLabel.append(macroSelect); this.$('.ww-fields').append(macroLabel);
+            const trimLabel = element('label', { class: 'ww-regex-trim-label' }, '从捕获组中裁剪的文字（每行一项）');
+            const trimInput = element('textarea', { rows: '2', 'aria-label': '裁剪文字' }); trimInput.value = (script.trimStrings || []).join('\n');
+            trimInput.addEventListener('change', () => { this.rememberUndo(); script.trimStrings = trimInput.value.split('\n').filter(Boolean); this.persist(); this.schedulePreview(); });
+            trimLabel.append(trimInput); this.$('.ww-fields').append(trimLabel);
+            const extra = element('details', { class: 'ww-regex-options' }); extra.append(element('summary', {}, '触发位置与高级设置'));
+            [...this.$('.ww-fields').children].slice(2).forEach(node => extra.append(node)); this.$('.ww-fields').append(extra);
+            this.$('.ww-regex-test').value = this.doc.previewTest ?? '<status>心情：平静\n地点：旧书店\n好感：20</status>';
+            this.$('.ww-hint').textContent = '正文框编辑替换 HTML，保存到绑定角色卡的局部正则；聊天中的启用授权仍在酒馆正则面板确认。';
         } else if (this.tab === 'preset' && field.path[0] === 'prompts') {
             if (!field.marker) {
                 this.metaInput('条目标题', ['prompts', field.path[1], 'name']);
@@ -471,23 +567,26 @@ export class Workbench {
         this.count();
     }
     metaInput(label, path, type = 'text') {
-        const wrapper = element('label', { class: 'ww-meta-input' }, label);
-        const input = element('input', { type: type === 'array' ? 'text' : type });
+        const wrapper = element('label', { class: 'ww-meta-input', 'data-key': path.at(-1) }, label);
+        const input = element('input', { type: type === 'array' ? 'text' : type === 'nullable-number' ? 'number' : type, 'aria-label': label });
         const val = readPath(this.doc.draft, path);
         if (type === 'checkbox') input.checked = !!val;
         else input.value = type === 'array' ? (val || []).join(', ') : (val ?? '');
-        input.addEventListener('change', () => {
-            if (type === 'number' && (!input.value.trim() || !Number.isFinite(Number(input.value)))) { this.message('请输入有效数字。', true); return; }
-            this.rememberUndo();
-            writePath(this.doc.draft, path, type === 'checkbox' ? input.checked : type === 'number' ? Number(input.value) : type === 'array' ? input.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) : input.value);
+        const liveRegex = path.at(-1) === 'findRegex';
+        input.addEventListener(liveRegex ? 'input' : 'change', () => {
+            if ((type === 'number' || type === 'nullable-number') && ((type === 'number' && !input.value.trim()) || !Number.isFinite(Number(input.value)))) { this.message('请输入有效数字。', true); return; }
+            this.rememberUndo(liveRegex);
+            writePath(this.doc.draft, path, type === 'checkbox' ? input.checked : type === 'nullable-number' ? input.value.trim() ? Number(input.value) : null : type === 'number' ? Number(input.value) : type === 'array' ? input.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) : input.value);
+            if (liveRegex) { this.persist(); this.schedulePreview(); return; }
             this.persist(); this.renderList(this.field.id);
         });
         wrapper.append(input); this.$('.ww-fields').append(wrapper);
     }
-    count() { this.$('.ww-count').textContent = `${Array.from(this.editor.value).length.toLocaleString()} 字`; this.updateHighlights(); }
+    count() { this.$('.ww-count').textContent = `${Array.from(this.editor.value).length.toLocaleString()} 字`; this.updateHighlights(); this.schedulePreview(); }
     canDelete(field = this.field) {
         if (!field || !this.doc) return false;
         if (this.tab === 'world') return true;
+        if (this.tab === 'regex') return true;
         if (this.tab === 'greetings') return field.path[0] === 'alternate_greetings';
         if (this.tab === 'preset' && field.path[0] === 'prompts') {
             const prompt = this.doc.draft.prompts[field.path[1]];
@@ -495,11 +594,45 @@ export class Workbench {
         }
         return false;
     }
+    cancelPreview() {
+        clearTimeout(this.previewTimer); this.previewSequence++;
+        this.regexRunner.cancel();
+    }
+    schedulePreview() {
+        this.cancelPreview();
+        if (this.tab !== 'regex' || !this.field || !this.dialog.open) {
+            this.$('.ww-preview-frame').srcdoc = ''; this.$('.ww-preview-source').textContent = ''; this.$('.ww-preview-status').textContent = ''; return;
+        }
+        const sequence = this.previewSequence;
+        this.previewTimer = setTimeout(() => this.renderPreview(sequence), 220);
+    }
+    async renderPreview(sequence = this.previewSequence) {
+        if (this.tab !== 'regex' || !this.field) { this.$('.ww-preview-frame').srcdoc = ''; return; }
+        const script = clone(this.doc.draft.scripts[this.field.path[1]]);
+        this.$('.ww-preview-status').textContent = '正在更新预览…';
+        try {
+            let result;
+            if (this.$('.ww-preview-mode').value === 'html') {
+                if (script.replaceString.length > 250000) throw new Error('预览代码过长，限 25 万字。');
+                result = { html: script.replaceString, count: null };
+            } else result = await this.regexRunner.run({ script, text: this.$('.ww-regex-test').value, character: this.fullCard?.name || '', user: this.bridge.context().name1 || '用户' });
+            if (sequence !== this.previewSequence || this.tab !== 'regex') return;
+            this.$('.ww-preview-frame').srcdoc = previewDocument(result.html);
+            this.$('.ww-preview-source').textContent = result.html;
+            this.$('.ww-preview-status').textContent = result.count === null ? '直接预览替换 HTML；捕获组与宏保持原文。' : result.disabled ? '这条正则已停用，显示未替换的测试文本。' : `当前单条正则命中 ${result.count} 处。预览仅保留在工作台，尚未写入角色卡。`;
+        } catch (error) {
+            if (sequence !== this.previewSequence) return;
+            this.$('.ww-preview-frame').srcdoc = '';
+            this.$('.ww-preview-source').textContent = '';
+            this.$('.ww-preview-status').textContent = `预览未完成：${error.message}`;
+        }
+    }
     deleteEntry() {
         if (!this.canDelete()) throw new Error('固定栏目或酒馆内置提示词不能删除，可编辑正文或停用。');
         const fields = this.fields(), index = fields.findIndex(f => f.id === this.field.id), id = this.field.id;
         this.rememberUndo();
         if (this.tab === 'world') delete this.doc.draft.entries[id];
+        else if (this.tab === 'regex') this.doc.draft.scripts.splice(this.field.path[1], 1);
         else if (this.tab === 'greetings') this.doc.draft.alternate_greetings.splice(this.field.path[1], 1);
         else {
             this.doc.draft.prompts.splice(this.field.path[1], 1);
@@ -543,7 +676,7 @@ export class Workbench {
     }
     async save() {
         if (!this.doc) throw new Error('请先选择要编辑的内容。');
-        this.bridge.assertCharacter(this.avatar);
+        if (['character', 'regex'].includes(this.doc.meta.kind)) this.bridge.assertTarget?.(this.doc.meta.id);
         await this.persist();
         const live = await this.bridge.read(this.doc.meta);
         const result = mergeThreeWay(this.doc.base, this.doc.draft, live);
@@ -568,6 +701,10 @@ export class Workbench {
         this.rememberUndo(); let wanted;
         if (this.tab === 'greetings') { this.doc.draft.alternate_greetings.push(''); wanted = `alt-${this.doc.draft.alternate_greetings.length - 1}`; }
         else if (this.tab === 'world') wanted = String(newEntry(this.doc.draft.entries, copy ? this.doc.draft.entries[this.field.id] : null));
+        else if (this.tab === 'regex') {
+            const script = copy && this.field ? { ...clone(this.doc.draft.scripts[this.field.path[1]]), id: crypto.randomUUID(), scriptName: this.field.title + ' · 副本' } : newRegex();
+            this.doc.draft.scripts.push(script); wanted = script.id;
+        }
         else if (this.tab === 'preset' && Array.isArray(this.doc.draft.prompts)) {
             const id = crypto.randomUUID();
             this.doc.draft.prompts.push({ identifier: id, name: '新提示词', role: 'system', content: '', system_prompt: false, marker: false, injection_position: 0, injection_depth: 4, forbid_overrides: false });
@@ -649,7 +786,9 @@ export class Workbench {
             const prompt = mode === 'write'
                 ? `请按照当前写卡预设的规则、格式和工作流程完成作者的写作要求。\n作者要求：${request}`
                 : `你现在协助作者修改写卡内容，而不是继续角色扮演。请遵循当前写卡预设的格式，按照下面的意见修改原文。只返回完整的修改后正文；作者没有要求修改的部分保持不变，不加解释或代码围栏。保留 {{user}}、{{char}} 等宏。\n编辑对象：${mode === 'result' ? '上一版写卡输出' : this.field.title}\n修改意见：${request}\n原文：\n${source}`;
-            const text = await this.bridge.generate(prompt, this.avatar);
+            const context = `本次编辑目标：${this.fullCard?.name || '未绑定角色卡'}。不要把当前聊天的角色当作编辑目标。\n`;
+            const regexContext = this.tab === 'regex' && this.field ? `\n你在修改局部正则的替换 HTML。请只返回完整可用的 HTML/CSS，不加代码围栏；保留捕获组引用和宏。查找表达式：${this.doc.draft.scripts[this.field.path[1]].findRegex}\n测试文本：${this.$('.ww-regex-test').value}\n预览不执行脚本。\n` : '';
+            const text = await this.bridge.generate(context + regexContext + prompt, this.avatar);
             this.suggestion = ['current', 'selection'].includes(mode) ? { original, start, end, key: this.key(this.doc.meta), field: this.field.id } : null;
             this.$('.ww-suggestion').value = text;
             this.persistWriting();
@@ -676,12 +815,11 @@ export class Workbench {
         this.message(`已放入“${field.title}”的草稿，可撤回。写入酒馆后才生效。`);
     }
     latestReply() {
-        this.bridge.assertCharacter(this.avatar);
         const reply = [...(this.bridge.context().chat || [])].reverse().find(m => !m.is_user && !m.is_system && typeof m.mes === 'string' && m.mes.trim());
         if (!reply) throw new Error('当前聊天里没有可读取的 AI 回复。');
         this.$('.ww-suggestion').value = reply.mes;
         this.$('.ww-ai-mode').value = 'result'; this.suggestion = null;
-        this.persistWriting(); this.message('已读取聊天最新回复，可直接提修改意见，再放入对应栏目。');
+        this.persistWriting(); this.message('已读取当前聊天最新回复（可能来自另一张角色卡）。请确认内容，再放入编辑目标的栏目。');
     }
     history() {
         if (!this.doc) return;
@@ -691,6 +829,7 @@ export class Workbench {
         if (!this.doc.history.length) list.textContent = '写入酒馆后会在这里保留版本。';
     }
     versionText(value) {
+        if (this.doc.meta.kind === 'regex') return value.scripts.map(script => `${script.scriptName}\n${script.findRegex}\n${script.replaceString}`).join('\n\n──────────\n\n');
         if (this.doc.meta.kind === 'character') return [
             ...CHARACTER_FIELDS.map(([key, title]) => `${title}\n${value[key] || '（空）'}`),
             ...(value.alternate_greetings || []).map((text, i) => `备选开场白 ${i + 1}\n${text || '（空）'}`),
@@ -716,6 +855,7 @@ export class Workbench {
         if (!data.draft || typeof data.draft !== 'object' || Array.isArray(data.draft)) throw new Error('草稿格式不正确。');
         if (data.meta.kind === 'character' && (!CHARACTER_FIELDS.every(([k]) => typeof data.draft[k] === 'string') || !Array.isArray(data.draft.alternate_greetings) || !data.draft.alternate_greetings.every(x => typeof x === 'string'))) throw new Error('角色草稿字段不完整。');
         if (data.meta.kind === 'world' && (!data.draft.entries || Array.isArray(data.draft.entries))) throw new Error('世界书草稿缺少条目。');
+        if (data.meta.kind === 'regex' && (!Array.isArray(data.draft.scripts) || !data.draft.scripts.every(s => s && typeof s.findRegex === 'string' && typeof s.replaceString === 'string' && Array.isArray(s.placement)))) throw new Error('局部正则草稿格式不完整。');
         snapshot(this.doc, '导入前的草稿'); this.rememberUndo();
         this.doc.draft = clone(data.draft);
         this.doc.note = typeof data.note === 'string' ? data.note : this.doc.note;
@@ -734,6 +874,7 @@ export class Workbench {
             this.$('[data-action="restore"]').disabled = false; return;
         }
         const action = button.dataset.action;
+        if (action === 'minimize') return this.run(() => this.minimize());
         if (action === 'close') return this.close();
         if (action === 'exit-cancel') { this.cancelExit(); return; }
         if (action === 'exit-confirm') return this.close({ confirmed: true });
@@ -753,6 +894,14 @@ export class Workbench {
         if (action === 'import-prompts') { this.$('.ww-prompt-file').click(); return; }
         await this.run(async () => {
             if (action === 'save') await this.save();
+            else if (action === 'bind-card') await this.bindTarget(this.$('.ww-card-select').value);
+            else if (action === 'refresh-resources') await this.switchTab(this.tab);
+            else if (action === 'preview-refresh') { this.cancelPreview(); await this.renderPreview(); }
+            else if (action === 'preview-advice') {
+                this.$('.ww-assistant').hidden = false; this.$('.ww-ai-mode').value = 'current';
+                this.$('.ww-instruction').placeholder = '例如：状态栏改为两列，手机上自动换行，保留 $1 等捕获组。';
+                this.$('.ww-instruction').scrollIntoView?.({ block: 'center' });
+            }
             else if (action === 'test') {
                 if (this.doc?.meta.kind !== 'character') throw new Error('请回到人物设定或开场白，保存角色卡后再试聊；世界书和预设请先分别写入。');
                 if (await this.save()) { await this.bridge.testChat(this.avatar); await this.close(); }
