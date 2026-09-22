@@ -1,4 +1,4 @@
-import { clone } from './core.js';
+import { clone, createId } from './core.js';
 
 export function insertRelative(items, additions, anchor, side, key = item => item.identifier) {
     const result = [...items];
@@ -26,7 +26,7 @@ export function exportPromptPack(preset, selectedIds, groupIndex = 0) {
         prompt_order: (preset.prompt_order || []).map(group => ({ ...group, order: group.order.filter(p => ids.has(p.identifier)) })),
     });
 }
-export function importPromptPack(preset, pack, { groupIndex = 0, anchor = '', side = 'after', idFactory = () => crypto.randomUUID() } = {}) {
+export function importPromptPack(preset, pack, { groupIndex = 0, anchor = '', side = 'after', idFactory = createId } = {}) {
     if (pack?.format !== 'writer-workbench-prompts-v1' || !Array.isArray(pack.prompts) || !pack.prompts.length || pack.prompts.length > 2000) throw new Error('请选择工作台导出的预设条目包（最多 2000 条）。');
     const seen = new Set();
     for (const p of pack.prompts) {

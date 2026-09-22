@@ -3,7 +3,7 @@ import { searchRanges, highlightText } from './search.js';
 import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
 import { DraftStore, storageMessage } from './storage.js';
 import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
-import { CHARACTER_FIELDS, clone, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
+import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
 
 const bridge = new TavernBridge();
 let app;
@@ -38,7 +38,7 @@ export class Workbench {
         if (!ctx.accountStorage) throw new Error('需要支持账号存储的 SillyTavern 版本，请先更新酒馆。');
         this.namespace = ctx.accountStorage.getItem('writer-workbench-browser-key');
         if (!this.namespace) {
-            this.namespace = crypto.randomUUID();
+            this.namespace = createId();
             ctx.accountStorage.setItem('writer-workbench-browser-key', this.namespace);
         }
         this.dialog = element('dialog', { class: 'ww', 'aria-label': '写卡工作台' });
@@ -702,11 +702,11 @@ export class Workbench {
         if (this.tab === 'greetings') { this.doc.draft.alternate_greetings.push(''); wanted = `alt-${this.doc.draft.alternate_greetings.length - 1}`; }
         else if (this.tab === 'world') wanted = String(newEntry(this.doc.draft.entries, copy ? this.doc.draft.entries[this.field.id] : null));
         else if (this.tab === 'regex') {
-            const script = copy && this.field ? { ...clone(this.doc.draft.scripts[this.field.path[1]]), id: crypto.randomUUID(), scriptName: this.field.title + ' · 副本' } : newRegex();
+            const script = copy && this.field ? { ...clone(this.doc.draft.scripts[this.field.path[1]]), id: createId(), scriptName: this.field.title + ' · 副本' } : newRegex();
             this.doc.draft.scripts.push(script); wanted = script.id;
         }
         else if (this.tab === 'preset' && Array.isArray(this.doc.draft.prompts)) {
-            const id = crypto.randomUUID();
+            const id = createId();
             this.doc.draft.prompts.push({ identifier: id, name: '新提示词', role: 'system', content: '', system_prompt: false, marker: false, injection_position: 0, injection_depth: 4, forbid_overrides: false });
             this.doc.draft.prompt_order[this.presetGroupIndex].order.push({ identifier: id, enabled: true });
             wanted = id;

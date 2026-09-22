@@ -1,5 +1,7 @@
+import { createId } from './core.js';
+
 export function newRegex() {
-    return { id: crypto.randomUUID(), scriptName: '新状态栏', findRegex: '/<status>([\\s\\S]*?)<\\/status>/g',
+    return { id: createId(), scriptName: '新状态栏', findRegex: '/<status>([\\s\\S]*?)<\\/status>/g',
         replaceString: '<section style="padding:16px;border:1px solid #888;border-radius:12px"><h3>{{char}} · 状态</h3><div style="white-space:pre-wrap">$1</div></section>',
         trimStrings: [], placement: [2], disabled: false, markdownOnly: true, promptOnly: false,
         runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
