@@ -58,8 +58,8 @@ dialog.ww { position:fixed; margin:0; inset:auto 12px 12px auto; z-index:4000; }
 .ww .ww-editor-heading { display:flex; align-items:center; gap:12px; justify-content:space-between; margin-bottom:12px; }
 .ww .ww-editor-heading>button { font-size:.85em; }
 .ww .ww-editor { flex:1 0 240px; min-height:240px; resize:vertical; line-height:1.8; }
-.ww .ww-editor-wrap { position:relative; flex:1 0 240px; min-height:240px; }
-.ww .ww-editor-wrap .ww-editor { display:block; height:100%; white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; }
+.ww .ww-editor-wrap { position:relative; flex:0 0 auto; min-height:0; }
+.ww .ww-editor-wrap .ww-editor { display:block; height:clamp(240px,40dvh,460px); white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; }
 .ww .ww-highlight-viewport { position:absolute; overflow:hidden; pointer-events:none; user-select:none; }
 .ww .ww-highlight-text { white-space:pre-wrap; overflow-wrap:break-word; word-break:normal; color:transparent; }
 .ww mark { background:Highlight; color:HighlightText; padding:0; border:0; border-radius:0; font:inherit; }
