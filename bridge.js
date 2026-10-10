@@ -76,6 +76,15 @@ export class TavernBridge {
     }
     async read(meta) {
         if (meta.kind === 'character') return characterContent(await this.getCharacter(meta.id));
+        if (meta.kind === 'preset-regex') {
+            const manager = this.manager(meta.api);
+            if (!manager.getCompletionPresetByName(meta.id)) throw new Error('目标预设已不存在。');
+            if (!manager.readPresetExtensionField) throw new Error('当前酒馆不支持预设正则扩展字段，请更新酒馆或导出正则手动导入。');
+            const scripts = manager.readPresetExtensionField({ name: meta.id, path: 'regex_scripts' }) ?? [];
+            if (!Array.isArray(scripts)) throw new Error('这个预设的正则字段格式不正确。');
+            if (scripts.some(s => !s || typeof s.findRegex !== 'string' || typeof s.replaceString !== 'string' || !Array.isArray(s.placement) || (s.trimStrings !== undefined && !Array.isArray(s.trimStrings)))) throw new Error('预设有不完整的正则条目，请先在酒馆正则面板检查格式。');
+            return { scripts: clone(scripts) };
+        }
         if (meta.kind === 'regex') {
             const card = await this.getCharacter(meta.id);
             const scripts = card.data?.extensions?.regex_scripts ?? [];
@@ -101,6 +110,14 @@ export class TavernBridge {
     }
     async write(meta, live, next) {
         if (equal(live, next)) return;
+        if (meta.kind === 'preset-regex') {
+            const manager = this.manager(meta.api);
+            if (!manager.getCompletionPresetByName(meta.id)) throw new Error('目标预设已不存在，已停止写入。');
+            if (!manager.writePresetExtensionField) throw new Error('当前酒馆不支持写入预设正则，请更新酒馆或导出正则手动导入。');
+            await manager.writePresetExtensionField({ name: meta.id, path: 'regex_scripts', value: clone(next.scripts) });
+            if (!equal(await this.read(meta), next)) throw new Error('预设正则保存结果不一致，草稿已保留。');
+            return;
+        }
         if (meta.kind === 'character' || meta.kind === 'regex') {
             this.assertTarget(meta.id);
             const patch = meta.kind === 'regex' ? { avatar: meta.id, data: { extensions: { regex_scripts: clone(next.scripts) } } } : characterPatch(live, next, meta.id);
