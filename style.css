@@ -160,6 +160,12 @@ dialog.ww { position:fixed; margin:0; inset:auto 12px 12px auto; z-index:4000; }
 .ww .ww-designer .ww-row>label { min-width:0; }
 .ww .ww-designer textarea { display:block; min-height:80px; }
 .ww .ww-designer select { max-width:100%; }
+.ww .ww-lab { flex:0 0 auto; min-width:0; margin-bottom:16px; padding-bottom:16px; border-bottom:1px solid var(--SmartThemeBorderColor,currentColor); }
+.ww .ww-lab label,.ww .ww-quiz>label { display:block; margin-block:10px; min-width:0; }
+.ww .ww-lab textarea,.ww .ww-lab input:not([type="checkbox"]),.ww .ww-lab select { display:block; width:100%; min-width:0; max-width:100%; }
+.ww .ww-lab textarea { min-height:70px; }
+.ww .ww-lab .ww-row { flex-wrap:wrap; gap:8px; }
+.ww .ww-lab p,.ww .ww-lab-status { overflow-wrap:anywhere; }
 .ww .ww-mobile-field-label { display:none; }
 .ww .ww-more { min-width:0; }
 .ww .ww-more summary { cursor:pointer; padding:8px; }

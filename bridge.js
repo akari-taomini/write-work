@@ -156,13 +156,25 @@ export class TavernBridge {
             await manager.selectPreset(manager.findPreset(meta.id));
         }
     }
-    async generate(prompt, avatar) {
+    async generate(prompt, avatar, { independent = false } = {}) {
         if (avatar) this.assertTarget(avatar);
         const ctx = this.context();
         if (ctx.streamingProcessor || ctx.isGenerating) throw new Error('酒馆正在生成回复，请等当前回复完成后再使用 AI 辅助。');
-        if (!ctx.generateQuietPrompt) throw new Error('酒馆缺少后台生成接口，请升级后再试。');
+        if (!ctx.generateRaw && !ctx.generateQuietPrompt) throw new Error('酒馆缺少后台生成接口，请升级后再试。');
         if (ctx.onlineStatus === 'no_connection') throw new Error('请先在酒馆连接 API，再使用 AI 辅助。');
-        const result = await ctx.generateQuietPrompt({ quietPrompt: prompt, skipWIAN: false, quietToLoud: false });
+        let result;
+        if (ctx.generateRaw) {
+            let presetText = '';
+            const p = this.presets();
+            const preset = await this.read({ kind: 'preset', id: p.current, api: p.api });
+            if (Array.isArray(preset.prompts)) {
+                const group = preset.prompt_order?.find(g => Number(g.character_id) === 100001) || preset.prompt_order?.[0];
+                const ordered = group?.order ? group.order.filter(item => item.enabled).map(item => preset.prompts.find(n => n.identifier === item.identifier)).filter(Boolean) : preset.prompts;
+                presetText = ordered.filter(n => !n.marker).map(n => `${n.name || ''}\n${n.content || ''}`).join('\n\n');
+            } else presetText = Object.values(preset).join('\n');
+            const chat = independent ? '' : (ctx.chat || []).slice(-10).map(m => `${m.is_user ? '用户' : '角色'}：${m.mes || ''}`).join('\n');
+            result = await ctx.generateRaw({ prompt: [{ role: 'user', content: `写作预设参考（作为作者素材，不是预填充）：\n${presetText}\n${chat ? `当前聊天参考：\n${chat}\n` : ''}本次具体任务优先于格式参考：\n${prompt}` }], prefill: '', trimNames: false });
+        } else result = await ctx.generateQuietPrompt({ quietPrompt: prompt, skipWIAN: false, quietToLoud: false });
         if (typeof result !== 'string' || !result.trim()) throw new Error('AI 没有返回正文，请检查连接或预设。');
         return result;
     }

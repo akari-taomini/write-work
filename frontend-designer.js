@@ -2,6 +2,8 @@ import { clone, createId } from './core.js';
 import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
 
 export function parseFrontendDesign(text) {
+    const blocks = text.trim().match(/^<<<FIND>>>\s*\n([\s\S]*?)\n<<<REPLACE>>>\s*\n([\s\S]*?)\n<<<SAMPLE>>>\s*\n([\s\S]*?)\n<<<EXPLANATION>>>\s*\n([\s\S]*?)\n<<<END>>>$/);
+    if (blocks) text = JSON.stringify({ findRegex: blocks[1].trim(), replaceString: blocks[2].trim(), sampleText: blocks[3].trim(), explanation: blocks[4].trim() });
     const fenced = text.trim().match(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i);
     const value = JSON.parse(fenced ? fenced[1] : text, (key, val) => {
         if (['__proto__', 'constructor', 'prototype'].includes(key)) throw new Error('设计结果包含不支持的字段名。');
@@ -23,7 +25,9 @@ export class FrontendDesigner {
           <label>真实输出样本<textarea data-design="sample" rows="3" placeholder="尽量贴一份真实输出，用来检查是否能匹配。"></textarea></label>
           <label>设计或修改要求<textarea data-design="request" rows="3" placeholder="例如：奶油色两列状态栏，手机上自动变成一列；保留原有字段。"></textarea></label>
           <div class="ww-row"><button type="button" data-designer="generate">AI 设计 / 按意见修改</button><button type="button" data-designer="stop" hidden>停止生成</button></div>
-          <label>设计结果 JSON（可手动编辑）<textarea data-design="result" rows="6" spellcheck="false"></textarea></label>
+          <label>查找表达式（直接粘贴到酒馆对应框）<textarea data-design="find" rows="3" spellcheck="false"></textarea></label><button type="button" data-designer="copy-find">复制查找表达式</button>
+          <label>替换内容 HTML/CSS（直接粘贴，不需要转义）<textarea data-design="replace" rows="8" spellcheck="false"></textarea></label><button type="button" data-designer="copy-replace">复制替换内容</button>
+          <details><summary>生成原文 / 旧版 JSON（格式异常时可查看）</summary><textarea data-design="result" rows="6" spellcheck="false"></textarea></details>
           <div class="ww-row"><button type="button" data-designer="preview">刷新预览</button><label>预览宽度<select data-design="width"><option value="100%">跟随窗口</option><option value="375px">手机 375px</option><option value="768px">平板 768px</option></select></label></div>
           <p class="ww-design-status" role="status"></p><div class="ww-preview-frame-wrap"><iframe class="ww-design-frame" title="前端正则设计预览" sandbox="" referrerpolicy="no-referrer"></iframe></div>
           <div class="ww-row"><label>采用到<select data-design="target"><option value="character">绑定角色卡的局部正则</option><option value="preset">所选预设的正则</option></select></label><button type="button" data-designer="adopt">新增到正则草稿</button><button type="button" data-designer="export">导出正则 JSON</button></div>
@@ -40,6 +44,7 @@ export class FrontendDesigner {
         this.panel.addEventListener('click', event => {
             const action = event.target.closest('[data-designer]')?.dataset.designer;
             if (!action) return;
+            event.stopPropagation();
             if (action === 'stop') { app.bridge.context().stopGeneration?.(); return; }
             if (app.busy) return;
             if (action === 'close') { this.panel.hidden = true; this.cancel(); return; }
@@ -58,7 +63,16 @@ export class FrontendDesigner {
             this.presetApi = p.api;
         } catch (error) { select.replaceChildren(); this.$('.ww-design-status').textContent = error.message; }
     }
-    data() { return Object.fromEntries(['format', 'sample', 'request', 'result'].map(k => [k, this.$(`[data-design="${k}"]`).value])); }
+    data() { return Object.fromEntries(['format', 'sample', 'request', 'result', 'find', 'replace'].map(k => [k, this.$(`[data-design="${k}"]`).value])); }
+    design() {
+        const data = this.data();
+        if (data.find.trim() && data.replace.trim()) {
+            let sample = data.sample, explanation = '';
+            try { const old = parseFrontendDesign(data.result); sample ||= old.sampleText; explanation = old.explanation; } catch { /* Manual direct fields need no JSON. */ }
+            return parseFrontendDesign(JSON.stringify({ findRegex: data.find, replaceString: data.replace, sampleText: sample || '请填写真实测试文本', explanation }));
+        }
+        return parseFrontendDesign(data.result);
+    }
     async persist() {
         const app = this.app; app.pendingPersistence++;
         try { await app.store.set(this.key(), this.data()); app.failedPersistence.delete(this.key()); }
@@ -70,15 +84,18 @@ export class FrontendDesigner {
             const data = await this.app.store.get(this.key()) || {};
             for (const [key, value] of Object.entries(data)) if (this.$(`[data-design="${key}"]`) && typeof value === 'string') this.$(`[data-design="${key}"]`).value = value;
             this.loaded = true;
+            if (!this.$('[data-design="find"]').value) {
+                try { const old = parseFrontendDesign(this.$('[data-design="result"]').value); this.$('[data-design="find"]').value = old.script.findRegex; this.$('[data-design="replace"]').value = old.script.replaceString; } catch { /* Empty or invalid prior result remains available. */ }
+            }
         }
         this.presets(); this.panel.hidden = false; this.panel.scrollIntoView?.({ block: 'start' }); this.schedule();
     }
     cancel() { clearTimeout(this.timer); this.sequence++; this.runner.cancel(); }
-    schedule() { this.cancel(); if (!this.panel.hidden && this.$('[data-design="result"]').value.trim()) this.timer = setTimeout(() => this.preview(), 300); }
+    schedule() { this.cancel(); if (!this.panel.hidden && (this.$('[data-design="result"]').value.trim() || this.$('[data-design="find"]').value.trim())) this.timer = setTimeout(() => this.preview(), 300); }
     async preview() {
         this.cancel(); const sequence = this.sequence;
         try {
-            const design = parseFrontendDesign(this.$('[data-design="result"]').value);
+            const design = this.design();
             const sample = this.$('[data-design="sample"]').value || design.sampleText;
             const result = await this.runner.run({ script: design.script, text: sample, character: this.app.fullCard?.name || '', user: this.app.bridge.context().name1 || '用户' });
             if (sequence !== this.sequence) return;
@@ -91,6 +108,13 @@ export class FrontendDesigner {
     }
     async action(action) {
         const app = this.app;
+        if (action === 'copy-find' || action === 'copy-replace') {
+            const input = this.$(`[data-design="${action === 'copy-find' ? 'find' : 'replace'}"]`);
+            if (!input.value.trim()) throw new Error('对应内容为空，请先生成或填写。');
+            try { if (!navigator.clipboard?.writeText) throw Error('HTTP clipboard fallback'); await navigator.clipboard.writeText(input.value); this.$('.ww-design-status').textContent = '已复制，可以直接粘贴到酒馆。'; }
+            catch { input.focus(); input.select(); const copied = document.execCommand?.('copy'); this.$('.ww-design-status').textContent = copied ? '已复制，可以直接粘贴。' : '已选中全部内容，请使用手机的复制菜单或 Ctrl+C。'; }
+            return;
+        }
         if (action === 'read' || action === 'read-all') {
             if (!app.doc || (action === 'read' && !app.field)) throw new Error('先选择预设输出模块或角色卡栏目，再读取。');
             const source = action === 'read-all' ? app.versionText(app.doc.draft) : app.tab === 'regex' ? JSON.stringify(app.doc.draft.scripts[app.field.path[1]], null, 2) : app.editor.value;
@@ -107,13 +131,19 @@ export class FrontendDesigner {
             this.$('.ww-design-status').textContent = '正在设计…'; app.generating = true;
             const stop = this.$('[data-designer="stop"]'); stop.hidden = false; stop.disabled = false;
             try {
-                const prompt = `你是 SillyTavern 前端正则设计助手。依据作者给出的输出模块说明或示例，生成用于显示格式化的正则与替换 HTML/CSS。保持原输出格式，匹配真实样本；如作者仅提供模板，构造一份有代表性的 sampleText。不执行 JavaScript，不依赖酒馆助手。用数字或命名捕获组，把动态字段写入替换 HTML。布局应适应手机。只返回严格 JSON，字段为 scriptName、findRegex（可含 /pattern/flags）、replaceString（完整 HTML/CSS）、sampleText、explanation。JSON 字符串中的反斜杠和换行必须正确转义，不加 Markdown 代码围栏。作者未要求修改的设置尽量保留。\n输出格式或原正则：\n${data.format}\n真实样本：\n${data.sample}\n设计意见：\n${data.request || '清晰美观地呈现输出字段'}\n上一版设计：\n${data.result}`;
-                const result = await app.bridge.generate(prompt, app.avatar);
-                this.$('[data-design="result"]').value = result; await this.persist(); await this.preview();
+                const prompt = `你是 SillyTavern 前端正则设计助手。依据作者输出格式或原正则生成匹配表达式和替换 HTML/CSS。保持输出格式，匹配真实样本；只有模板时构造真实样本。不执行 JavaScript，不依赖酒馆助手，布局适应手机，用 $1 或命名捕获组引用动态内容。不要生成 JSON，不要转义反斜杠或换行，不加代码围栏。严格按下面5个独占一行的标记输出，每段写原始可复制文本：\n<<<FIND>>>\n/查找表达式/flags\n<<<REPLACE>>>\n完整HTML与CSS\n<<<SAMPLE>>>\n测试样本\n<<<EXPLANATION>>>\n简短说明\n<<<END>>>\n输出格式：\n${data.format}\n真实样本：\n${data.sample}\n设计意见：\n${data.request || '清晰美观地呈现输出字段'}\n上一版表达式：${data.find}\n上一版HTML：${data.replace}`;
+                const result = await app.bridge.generate(prompt, app.avatar, { independent: true });
+                this.$('[data-design="result"]').value = result; await this.persist();
+                let design;
+                try { design = parseFrontendDesign(result); }
+                catch { throw new Error('模型没有按分段格式返回，原文已保留。可展开“生成原文”，把表达式与 HTML 分别粘贴到两个框，再预览；或重新生成。'); }
+                this.$('[data-design="find"]').value = design.script.findRegex; this.$('[data-design="replace"]').value = design.script.replaceString;
+                if (!this.$('[data-design="sample"]').value.trim()) this.$('[data-design="sample"]').value = design.sampleText;
+                await this.persist(); await this.preview();
             } finally { app.generating = false; stop.hidden = true; }
         } else if (action === 'preview') await this.preview();
         else if (action === 'adopt' || action === 'export') {
-            const design = parseFrontendDesign(this.$('[data-design="result"]').value);
+            const design = this.design();
             // Validate against the actual sample before adopting. A non-match needs author correction.
             const sample = this.$('[data-design="sample"]').value || design.sampleText;
             const rendered = await this.runner.run({ script: design.script, text: sample, character: app.fullCard?.name || '', user: app.bridge.context().name1 || '用户' });

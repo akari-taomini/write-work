@@ -3,6 +3,7 @@ import { searchRanges, highlightText } from './search.js';
 import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
 import { installLayoutControls } from './layout-controls.js';
 import { FrontendDesigner } from './frontend-designer.js';
+import { WriterLab } from './writer-lab.js';
 import { DraftStore, storageMessage } from './storage.js';
 import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
 import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
@@ -55,7 +56,7 @@ export class Workbench {
             </header>
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
             <details class="ww-binding"><summary>绑定编辑角色卡（不切换聊天）</summary><div class="ww-row"><input class="ww-card-search text_pole" type="search" placeholder="搜索角色名或文件名" aria-label="搜索要编辑的角色卡"><select class="ww-card-select" aria-label="要绑定的角色卡"></select><button data-action="bind-card">绑定这张卡</button></div><small class="ww-bound-info"></small></details>
-            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button></nav>
+            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button><button data-action="lab">创作工具</button></nav>
             <div class="ww-body">
               <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label>
                 <label class="ww-regex-target-label" hidden>正则绑定到<select class="ww-regex-target" aria-label="正则绑定目标"><option value="character">绑定角色卡</option><option value="preset">所选预设</option></select></label>
@@ -105,6 +106,7 @@ export class Workbench {
         this.$ = selector => this.dialog.querySelector(selector);
         this.layout = installLayoutControls(this);
         this.designer = new FrontendDesigner(this);
+        this.lab = new WriterLab(this);
         // Keep the history overlay outside the scrolling shell.
         this.dialog.append(this.$('.ww-history'));
         this.dialog.append(this.$('.ww-exit'));
@@ -307,12 +309,14 @@ export class Workbench {
     async minimize() {
         await this.persist(); await this.persistWriting();
         if (this.designer.loaded) await this.designer.persist();
+        await this.lab.persist();
         this.minimized = true; this.cancelPreview(); this.designer.cancel(); this.dialog.close(); this.resumeButton.hidden = false;
     }
     unwrittenDocuments() { return [...this.docs.values()].filter(doc => !equal(doc.base, doc.draft)); }
     async close({ confirmed = false } = {}) {
         await Promise.all([...this.docs.values()].map(doc => this.persist(doc)).concat(this.persistWriting()));
         if (this.designer.loaded) await this.designer.persist();
+        await this.lab.persist();
         const dirty = this.unwrittenDocuments();
         if (!confirmed && (dirty.length || this.failedPersistence.size)) {
             this.$('.ww-exit-list').replaceChildren(...dirty.map(doc => element('li', {}, `${doc.meta.kind === 'world' ? '世界书' : doc.meta.kind === 'preset' ? '预设' : doc.meta.kind === 'preset-regex' ? '预设正则' : doc.meta.kind === 'regex' ? '局部正则' : '角色卡'}：${doc.meta.title || doc.meta.id}`)));
@@ -336,7 +340,9 @@ export class Workbench {
         this.discarding = true;
         try {
             // Read every live object before discarding anything. Never write to Tavern here.
-            const live = await Promise.all(docs.map(doc => this.bridge.read(doc.meta)));
+            // Discard must remain possible if a native preset was changed or deleted.
+            // Use the last loaded base when the target can no longer be read; never write it back.
+            const live = await Promise.all(docs.map(async doc => { try { return await this.bridge.read(doc.meta); } catch { return clone(doc.base); } }));
             for (let i = 0; i < docs.length; i++) {
                 const doc = docs[i];
                 const reset = { ...doc, base: clone(live[i]), draft: clone(live[i]), undo: [], lastEdit: 0 };
@@ -347,10 +353,10 @@ export class Workbench {
             await this.persistWriting();
             if (this.failedPersistence.size) throw new Error('仍有本地备份失败，请返回检查。');
             if (this.designer.loaded) await this.designer.persist();
-            this.renderList(); this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.resumeButton.hidden = true; this.dialog.close();
+            await this.lab.persist();
+            this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.resumeButton.hidden = true; this.dialog.close();
         } catch (error) {
             this.$('.ww-exit-error').textContent = `未能完成退出：${error.message}。已恢复成功的对象不再列为未保存；其余草稿仍保留，可重试或返回编辑。`;
-            this.renderList();
         } finally { this.discarding = false; }
     }
     connection() {
@@ -578,7 +584,7 @@ export class Workbench {
                 label.append(select); this.$('.ww-fields').append(label);
             }
             for (const [i, group] of (this.doc.draft.prompt_order || []).entries()) {
-                const j = group.order.findIndex(p => p.identifier === field.id);
+                const j = (group.order || []).findIndex(p => p.identifier === field.id);
                 const groupName = Number(group.character_id) === 100000 ? '默认预设组' : Number(group.character_id) === 100001 ? '角色聊天组' : `预设组 ${i + 1}`;
                 if (j >= 0) this.metaInput(`${groupName}启用`, ['prompt_order', i, 'order', j, 'enabled'], 'checkbox');
             }
@@ -592,11 +598,13 @@ export class Workbench {
         if (type === 'checkbox') input.checked = !!val;
         else input.value = type === 'array' ? (val || []).join(', ') : (val ?? '');
         const liveRegex = path.at(-1) === 'findRegex';
-        input.addEventListener(liveRegex ? 'input' : 'change', () => {
+        const liveTitle = ['name', 'comment', 'scriptName'].includes(path.at(-1));
+        input.addEventListener(liveRegex || liveTitle ? 'input' : 'change', () => {
             if ((type === 'number' || type === 'nullable-number') && ((type === 'number' && !input.value.trim()) || !Number.isFinite(Number(input.value)))) { this.message('请输入有效数字。', true); return; }
-            this.rememberUndo(liveRegex);
+            this.rememberUndo(liveRegex || liveTitle);
             writePath(this.doc.draft, path, type === 'checkbox' ? input.checked : type === 'nullable-number' ? input.value.trim() ? Number(input.value) : null : type === 'number' ? Number(input.value) : type === 'array' ? input.value.split(/[,，]/).map(s => s.trim()).filter(Boolean) : input.value);
             if (liveRegex) { this.persist(); this.schedulePreview(); return; }
+            if (liveTitle) { this.field.title = input.value || '未命名'; this.$('.ww-title').textContent = this.field.title; this.persist(); this.renderList(this.field.id, true); return; }
             this.persist(); this.renderList(this.field.id);
         });
         wrapper.append(input); this.$('.ww-fields').append(wrapper);
@@ -895,6 +903,7 @@ export class Workbench {
         const action = button.dataset.action;
         if (action === 'center') { this.layout.center(); return; }
         if (action === 'designer') return this.run(() => this.designer.open());
+        if (action === 'lab') return this.run(() => this.lab.open());
         if (action === 'minimize') return this.run(() => this.minimize());
         if (action === 'close') return this.close();
         if (action === 'exit-cancel') { this.cancelExit(); return; }
