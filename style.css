@@ -78,6 +78,9 @@ dialog.ww { position:fixed; margin:0; inset:auto 12px 12px auto; z-index:4000; }
 .ww .ww-meta-input input[type="number"] { width:72px; }
 .ww .ww-search { display:flex; gap:6px; margin-bottom:12px; flex-wrap:wrap; }
 .ww .ww-search input { flex:1; width:120px; }
+.ww .ww-search label { display:flex; align-items:center; gap:6px; }
+.ww .ww-search select { width:auto; max-width:100%; }
+.ww .ww-search small { flex-basis:100%; }
 .ww .ww-row { display:flex; align-items:center; gap:8px; flex-wrap:wrap; }
 .ww .ww-assistant { margin-top:16px; padding-top:16px; border-top:1px solid var(--SmartThemeBorderColor,currentColor); }
 .ww .ww-assistant>.ww-row { margin-block:10px; }

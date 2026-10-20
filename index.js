@@ -71,7 +71,7 @@ export class Workbench {
               <div class="ww-sidebar-divider" role="separator" tabindex="0" aria-label="调整条目栏宽度" aria-orientation="vertical" aria-valuemin="150" aria-valuemax="600" aria-valuenow="196" title="拖动调整条目栏宽度，也可用左右方向键"></div>
               <main class="ww-main">
                 <div class="ww-editor-heading"><div><h2 class="ww-title">开始写作</h2><small class="ww-hint"></small></div><button data-action="search" title="查找与替换">查找替换</button></div>
-                <div class="ww-search" hidden><input class="ww-find" placeholder="查找文字" aria-label="查找文字"><input class="ww-replace" placeholder="替换为" aria-label="替换文字"><button data-action="find">查找下一个</button><button data-action="replace">全部替换</button></div>
+                <div class="ww-search" hidden><input class="ww-find" placeholder="查找文字" aria-label="查找文字"><input class="ww-replace" placeholder="替换为" aria-label="替换文字"><label>替换范围<select class="ww-replace-scope" aria-label="替换范围"><option value="current">当前条目</option></select></label><button data-action="find">查找下一个</button><button data-action="replace">全部替换</button><small>按字面替换正文，区分大小写。所有条目包含隐藏和停用条目，跳过自动注入占位；查找下一个仅定位当前正文。</small></div>
                 <div class="ww-fields"></div>
                 <div class="ww-hit-nav" hidden><span class="ww-hit-count" role="status"></span><button data-action="hit-prev">上一个</button><button data-action="hit-next">下一个</button></div>
                 <div class="ww-editor-wrap"><textarea class="ww-editor" aria-label="正文编辑区" spellcheck="false" placeholder="从这里开始，写下你的角色……"></textarea><div class="ww-highlight-viewport" aria-hidden="true"><div class="ww-highlight-text"></div></div></div>
@@ -433,6 +433,7 @@ export class Workbench {
         else if (equal(doc.base, doc.draft)) { doc.base = clone(live); doc.draft = clone(live); }
         else if (!equal(doc.base, live)) this.message('恢复了上次草稿。酒馆原内容也有变化，写入前会检查冲突。');
         this.doc = doc;
+        this.$('.ww-replace-scope').value = 'current';
         this.selectedPrompts.clear(); this.$('.ww-filter').value = '';
         this.presetGroupIndex = Math.max(0, doc.draft.prompt_order?.findIndex(g => Number(g.character_id) === 100001) ?? 0);
         this.docs.set(this.key(meta), doc);
@@ -442,6 +443,7 @@ export class Workbench {
     }
     empty(text) {
         this.doc = null; this.field = null;
+        this.renderReplaceScope();
         this.$('.ww-list').replaceChildren(); this.$('.ww-fields').replaceChildren();
         this.$('.ww-mobile-field').replaceChildren();
         this.$('.ww-batch').hidden = true; this.$('.ww-insert-tools').hidden = true; this.$('.ww-preset-group-label').hidden = true;
@@ -472,6 +474,7 @@ export class Workbench {
         return this.fields().filter(field => terms.every(term => `${field.title}\n${readPath(this.doc.draft, field.path) || ''}\n${this.tab === 'regex' ? this.doc.draft.scripts[field.path[1]].findRegex || '' : ''}`.toLocaleLowerCase().includes(term)));
     }
     renderList(wanted, filterOnly = false) {
+        this.renderReplaceScope();
         const fields = this.fields(), visible = this.visibleFields(); const list = this.$('.ww-list'); list.replaceChildren();
         this.$('.ww-filter-count').textContent = `找到 ${visible.length} / ${fields.length} 条`;
         this.$('.ww-mobile-field').replaceChildren(...visible.map(field => option(field.id, field.title)));
@@ -501,6 +504,37 @@ export class Workbench {
         }
         if (filterOnly) { this.$('.ww-mobile-field').value = this.field?.id || ''; return; }
         this.showField(fields.find(f => f.id === wanted || (!wanted && f.id === this.doc?.lastField?.[this.tab])) || fields[0]);
+    }
+    renderReplaceScope() {
+        const select = this.$('.ww-replace-scope'), previous = select.value;
+        const kind = this.doc?.meta.kind;
+        const all = kind === this.tab && ['world', 'preset'].includes(kind);
+        select.replaceChildren(option('current', '当前条目'), ...(all ? [option(kind, kind === 'world' ? '当前世界书所有条目' : '当前预设所有条目')] : []));
+        select.value = all && previous === kind ? kind : 'current';
+    }
+    async replaceAll() {
+        if (!this.doc) throw new Error('请先选择要编辑的内容。');
+        const needle = this.$('.ww-find').value, replacement = this.$('.ww-replace').value;
+        if (!needle) throw new Error('请输入要查找的文字。');
+        const scope = this.$('.ww-replace-scope').value;
+        if (scope !== 'current' && (!['world', 'preset'].includes(scope) || scope !== this.tab || scope !== this.doc.meta.kind)) throw new Error('替换范围已失效，请重新选择。');
+        const fields = (scope === 'current' ? [this.field] : this.fields()).filter(field => field && !field.marker);
+        if (needle === replacement) { this.message('替换文字与查找文字相同，草稿未修改。'); return; }
+        const changes = [];
+        let count = 0;
+        for (const field of fields) {
+            const text = readPath(this.doc.draft, field.path);
+            if (typeof text !== 'string') continue;
+            const parts = text.split(needle);
+            if (parts.length < 2) continue;
+            count += parts.length - 1;
+            changes.push({ field, value: parts.join(replacement) });
+        }
+        if (!changes.length) { this.message('所选范围内没有找到，草稿未修改。'); return; }
+        this.rememberUndo();
+        for (const { field, value } of changes) writePath(this.doc.draft, field.path, value);
+        this.renderList(this.field?.id);
+        if (await this.persist()) this.message(`已替换 ${count} 处，涉及 ${changes.length} 个条目；可在“更多操作 → 撤回”中整批撤回，点击“写入酒馆”后生效。`);
     }
     updateSelectedCount() { this.$('.ww-selected-count').textContent = `已勾选 ${this.selectedPrompts.size} 条（包含被搜索隐藏的勾选项）`; }
     showField(field) {
@@ -967,19 +1001,7 @@ export class Workbench {
                 snapshot(this.doc, '合并冲突前的草稿'); this.rememberUndo();
                 const live = await this.bridge.read(this.doc.meta); this.doc.base = clone(live); this.doc.draft = clone(live);
                 this.persist(); this.renderList(); this.message('已载入酒馆版本；原草稿在历史版本中，可以查看并取回内容。');
-            } else if (action === 'find' || action === 'replace') {
-                if (!this.field || this.field.marker) return;
-                const needle = this.$('.ww-find').value; if (!needle) throw new Error('请输入要查找的文字。');
-                if (action === 'find') {
-                    let index = this.editor.value.indexOf(needle, this.editor.selectionEnd);
-                    if (index < 0) index = this.editor.value.indexOf(needle);
-                    if (index < 0) this.message('当前正文中没有找到。');
-                    else { this.editor.disabled = false; this.editor.focus(); this.editor.setSelectionRange(index, index + needle.length); }
-                } else {
-                    this.rememberUndo(); const next = this.editor.value.split(needle).join(this.$('.ww-replace').value);
-                    writePath(this.doc.draft, this.field.path, next); this.editor.value = next; this.persist(); this.count();
-                }
-            }
+            } else if (action === 'replace') await this.replaceAll();
         });
     }
 }
