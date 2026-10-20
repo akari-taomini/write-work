@@ -133,3 +133,4 @@ export class WriterLab {
         await this.persist(); this.$('.ww-lab-status').textContent = '已完成，结果保留在草稿中。';
     }
 }
+

@@ -18,3 +18,4 @@ export function highlightText(node, text, ranges, active = -1) {
     fragment.append(document.createTextNode(text.slice(cursor)));
     node.replaceChildren(fragment);
 }
+

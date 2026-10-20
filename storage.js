@@ -73,3 +73,4 @@ export function storageMessage(error) {
     if (error?.name === 'SecurityError' || error?.name === 'NotAllowedError') return '浏览器禁止本地草稿存储；内容仍在当前页面，可导出或直接写入酒馆。';
     return '本地草稿未能保存；内容仍在当前页面，可导出或直接写入酒馆。';
 }
+

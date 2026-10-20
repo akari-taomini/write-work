@@ -186,3 +186,4 @@ export class TavernBridge {
         await ctx.openCharacterChat(`写卡测试 ${new Date().toISOString().replace(/[:.]/g, '-')}`);
     }
 }
+

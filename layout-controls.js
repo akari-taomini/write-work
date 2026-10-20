@@ -58,3 +58,4 @@ export function installLayoutControls(app) {
         const rect = panel.getBoundingClientRect(); position((window.innerWidth - rect.width) / 2, (window.innerHeight - rect.height) / 2); remember();
     } };
 }
+
