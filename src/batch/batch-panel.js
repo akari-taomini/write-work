@@ -1,6 +1,6 @@
 import { validateRules, previewSegments } from './batch-engine.js';
 import { BATCH_SCOPES } from './batch-adapters.js';
-import { revealInWorkbench } from './layout-controls.js';
+import { revealInWorkbench } from '../app/layout-controls.js';
 
 const node = (tag, text = '', className = '') => { const el = document.createElement(tag); el.textContent = text; el.className = className; return el; };
 const button = (text, action) => { const el = node('button', text, 'menu_button'); el.type = 'button'; el.dataset.batchAction = action; return el; };

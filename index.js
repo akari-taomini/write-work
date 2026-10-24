@@ -1,13 +1,13 @@
-import { TavernBridge } from './bridge.js';
-import { searchRanges, highlightText } from './search.js';
-import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
-import { installLayoutControls, revealInWorkbench } from './layout-controls.js';
-import { FrontendDesigner } from './frontend-designer.js';
-import { WriterLab } from './writer-lab.js';
-import { BatchPanel } from './batch-panel.js';
-import { DraftStore, storageMessage } from './storage.js';
-import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
-import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
+import { TavernBridge } from './src/app/bridge.js';
+import { searchRanges, highlightText } from './src/core/search.js';
+import { newRegex, RegexRunner, previewDocument } from './src/core/regex-preview.js';
+import { installLayoutControls, revealInWorkbench } from './src/app/layout-controls.js';
+import { FrontendDesigner } from './src/features/frontend-designer.js';
+import { WriterLab } from './src/features/writer-lab.js';
+import { BatchPanel } from './src/batch/batch-panel.js';
+import { DraftStore, storageMessage } from './src/app/storage.js';
+import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './src/core/preset-tools.js';
+import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './src/core/core.js';
 
 const bridge = new TavernBridge();
 let app;

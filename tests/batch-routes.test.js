@@ -5,7 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import express from 'express';
 import yauzl from 'yauzl';
-import { installBatchRoutes } from '../batch-server.js';
+import { installBatchRoutes } from '../src/batch/batch-server.js';
 
 test('local API enforces user-scoped scan tokens and exports a complete verified ZIP', async t => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), 'ww-route-test-'));

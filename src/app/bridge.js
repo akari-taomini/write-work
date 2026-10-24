@@ -1,4 +1,4 @@
-import { clone, characterContent, characterPatch, equal } from './core.js';
+import { clone, characterContent, characterPatch, equal } from '../core/core.js';
 
 export class TavernBridge {
     context() {

@@ -9,10 +9,10 @@ import extract from 'png-chunks-extract';
 import PNGtext from 'png-chunk-text';
 import encode from '../../../../../src/png/encode.js';
 import { write as cardWrite } from '../../../../../src/character-card-parser.js';
-import { compileRules, findMatches, findMatchesAsync, replaceMatches, validateRules, previewSegments } from '../batch-engine.js';
-import { editableFields, setAt } from '../batch-adapters.js';
-import { BatchService, decodeDocument, confined } from '../batch-server.js';
-import { revealInWorkbench } from '../layout-controls.js';
+import { compileRules, findMatches, findMatchesAsync, replaceMatches, validateRules, previewSegments } from '../src/batch/batch-engine.js';
+import { editableFields, setAt } from '../src/batch/batch-adapters.js';
+import { BatchService, decodeDocument, confined } from '../src/batch/batch-server.js';
+import { revealInWorkbench } from '../src/app/layout-controls.js';
 
 const rules = [{ find: '顾北辰', replace: '沈辞' }, { find: '顾家', replace: '沈家' }, { find: '辰辰', replace: '辞辞' }];
 const sha = b => crypto.createHash('sha256').update(b).digest('hex');
