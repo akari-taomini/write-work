@@ -1,6 +1,6 @@
-import { clone, createId } from './core.js';
-import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
-import { revealInWorkbench } from './layout-controls.js';
+import { clone, createId } from '../core/core.js';
+import { newRegex, RegexRunner, previewDocument } from '../core/regex-preview.js';
+import { revealInWorkbench } from '../app/layout-controls.js';
 
 export function parseFrontendDesign(text) {
     const blocks = text.trim().match(/^<<<FIND>>>\s*\n([\s\S]*?)\n<<<REPLACE>>>\s*\n([\s\S]*?)\n<<<SAMPLE>>>\s*\n([\s\S]*?)\n<<<EXPLANATION>>>\s*\n([\s\S]*?)\n<<<END>>>$/);

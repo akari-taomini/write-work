@@ -3,7 +3,7 @@ import path from 'node:path';
 import crypto from 'node:crypto';
 import extract from 'png-chunks-extract';
 import PNGtext from 'png-chunk-text';
-import encode from '../../../../src/png/encode.js';
+import encode from '../../../../../../src/png/encode.js';
 import YAML from 'yaml';
 import archiver from 'archiver';
 import { compileRules, findMatchesAsync, replaceMatches, snippet } from './batch-engine.js';

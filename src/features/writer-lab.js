@@ -1,5 +1,5 @@
-import { clone } from './core.js';
-import { revealInWorkbench } from './layout-controls.js';
+import { clone } from '../core/core.js';
+import { revealInWorkbench } from '../app/layout-controls.js';
 
 export const NAME_BLACKLIST = { surnames: '顾、沈、陆、傅、苏、江、墨、慕、祁', names: '顾言、沈辞、陆沉、傅寒、墨渊、夜寒、慕容、北辰、景琛、司夜寒、顾北辰' };
 export const CHARACTER_QUESTIONS = [

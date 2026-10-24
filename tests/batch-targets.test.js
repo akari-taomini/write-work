@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { selectTargetGroup, visibleTargets } from '../batch-panel.js';
+import { selectTargetGroup, visibleTargets } from '../src/batch/batch-panel.js';
 
 const owners = [
     { id: 'card-a', type: 'character', label: '故事甲.json' },
