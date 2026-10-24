@@ -1,5 +1,6 @@
 import { clone, createId } from './core.js';
 import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
+import { revealInWorkbench } from './layout-controls.js';
 
 export function parseFrontendDesign(text) {
     const blocks = text.trim().match(/^<<<FIND>>>\s*\n([\s\S]*?)\n<<<REPLACE>>>\s*\n([\s\S]*?)\n<<<SAMPLE>>>\s*\n([\s\S]*?)\n<<<EXPLANATION>>>\s*\n([\s\S]*?)\n<<<END>>>$/);
@@ -88,7 +89,7 @@ export class FrontendDesigner {
                 try { const old = parseFrontendDesign(this.$('[data-design="result"]').value); this.$('[data-design="find"]').value = old.script.findRegex; this.$('[data-design="replace"]').value = old.script.replaceString; } catch { /* Empty or invalid prior result remains available. */ }
             }
         }
-        this.presets(); this.panel.hidden = false; this.panel.scrollIntoView?.({ block: 'start' }); this.schedule();
+        this.presets(); this.panel.hidden = false; revealInWorkbench(this.app, this.panel); this.schedule();
     }
     cancel() { clearTimeout(this.timer); this.sequence++; this.runner.cancel(); }
     schedule() { this.cancel(); if (!this.panel.hidden && (this.$('[data-design="result"]').value.trim() || this.$('[data-design="find"]').value.trim())) this.timer = setTimeout(() => this.preview(), 300); }

@@ -1,4 +1,5 @@
 import { clone } from './core.js';
+import { revealInWorkbench } from './layout-controls.js';
 
 export const NAME_BLACKLIST = { surnames: '顾、沈、陆、傅、苏、江、墨、慕、祁', names: '顾言、沈辞、陆沉、傅寒、墨渊、夜寒、慕容、北辰、景琛、司夜寒、顾北辰' };
 export const CHARACTER_QUESTIONS = [
@@ -65,7 +66,7 @@ export class WriterLab {
     async open() {
         this.presets();
         if (!this.loaded) { const data = await this.app.store.get(this.key()) || {}; this.inspirations = data.inspirations || []; this.candidates = data.candidates || []; this.options('inspiration', [['', '使用自定义灵感'], ...this.inspirations.map((n, i) => [String(i), `${n.title}：${n.idea}`])]); this.options('name-choice', this.candidates.map(n => [n.name, n.name])); for (const [key, value] of Object.entries(data.values || {})) { const node = [...this.panel.querySelectorAll('[data-lab-input]')].find(n => n.dataset.labInput === key); if (node) { if (node.type === 'checkbox') node.checked = !!value; else if (typeof value === 'string') node.value = value; } } this.loaded = true; }
-        this.presets(); this.panel.hidden = false; this.view(); this.panel.scrollIntoView?.({ block: 'start' });
+        this.presets(); this.panel.hidden = false; this.view(); revealInWorkbench(this.app, this.panel);
     }
     draft() { return Object.fromEntries(['name', 'description', 'personality', 'scenario', 'mes_example'].map(k => [k, this.value(k)])); }
     async character() {

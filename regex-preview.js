@@ -2,7 +2,7 @@ import { createId } from './core.js';
 
 export function newRegex() {
     return { id: createId(), scriptName: '新状态栏', findRegex: '/<status>([\\s\\S]*?)<\\/status>/g',
-        replaceString: '<section style="padding:16px;border:1px solid #888;border-radius:12px"><h3>{{char}} · 状态</h3><div style="white-space:pre-wrap">$1</div></section>',
+        replaceString: '<section style="padding:1em;border:1px solid #888;border-radius:.75em"><h3>{{char}} · 状态</h3><div style="white-space:pre-wrap">$1</div></section>',
         trimStrings: [], placement: [2], disabled: false, markdownOnly: true, promptOnly: false,
         runOnEdit: true, substituteRegex: 0, minDepth: null, maxDepth: null };
 }
@@ -44,7 +44,7 @@ export function previewDocument(html) {
     // The iframe also has an empty sandbox: no scripts, same-origin access, forms or top navigation.
     return '<!doctype html><html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">' +
         '<meta http-equiv="Content-Security-Policy" content="default-src \'none\'; style-src \'unsafe-inline\'; img-src data: https:; font-src data:; script-src \'none\'; connect-src \'none\'; base-uri \'none\'; form-action \'none\'">' +
-        '<style>body{margin:12px;overflow-wrap:anywhere}img{max-width:100%}</style></head><body>' + content + '</body></html>';
+        '<style>body{margin:.75em;overflow-wrap:anywhere}img{max-width:100%}</style></head><body>' + content + '</body></html>';
 }
 
 export class RegexRunner {
