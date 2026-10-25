@@ -27,3 +27,11 @@
 5. `tests/batch.test.js` 依赖 SillyTavern 源码，无法通过纯前端测试代替。
 
 **请不要再为 TT 新建 Node 服务端插件或混用 PC 的服务端 API。** 0.8.2 已按宿主分别选择后端适配。
+
+## 0.8.3 免配置行为
+
+`src/batch/batch-runtime.js` 根据宿主选择 `batch-tt.js` 或 `batch-st.js`。普通 SillyTavern 前端使用官方角色卡/聊天/世界书 API，浏览器 IndexedDB 只存放当前账号的备份；不要求修改服务器目录或启用 Node 插件。
+
+`src/batch/batch-st.js` 重用 TT 适配里已经覆盖预览、备份、冲突处理和回滚的流程，但限制范围，不允许访问任意磁盘路径；浏览器备份和 TT 原生扩展存储完全分离。
+
+此前 `plugins/writer-workbench-batch/` 以及 `src/batch/batch-server.js` 保留为历史高级模块，不在当前默认调用链，普通用户无需安装。

@@ -67,7 +67,7 @@ export class BatchPanel {
     syncScopeCapabilities() {
         if (!this.inventory?.supportedScopes) return;
         this.panel.querySelectorAll('[data-batch-scope]').forEach(input => {
-            if (!this.inventory.supportedScopes.includes(input.value)) { input.disabled = true; input.checked = false; input.title = '当前 TT 适配暂未开放此范围'; }
+            if (!this.inventory.supportedScopes.includes(input.value)) { input.disabled = true; input.checked = false; input.title = '当前宿主的免配置适配暂不支持此范围'; }
         });
         this.$('[data-batch-action="scan"]').disabled = !!this.inventory.datasetBinding || !!this.scanning || !!this.operation;
         this.$('[data-batch-action="backups"]').disabled = !!this.inventory.datasetBinding || !!this.scanning || !!this.operation;
@@ -125,15 +125,15 @@ export class BatchPanel {
         this.message('正在读取资源列表…'); this.inventory = await this.api('inventory'); this.renderOwners();
         if (this.inventory.supportedScopes) {
             this.syncScopeCapabilities();
-            this.$('.ww-batch-backups>small').textContent = `备份保存在${this.inventory.backupLocation}；可下载 ZIP 或导入本工作台导出的 TT 备份。恢复将检查修改后是否又有新变化。`;
-            this.panel.querySelector(':scope > p').textContent = `当前宿主：TauriTavern。通过当前 TT 原生接口读取和保存，不使用 SillyTavern 服务端插件。${this.inventory.warning}`;
+            this.$('.ww-batch-backups>small').textContent = `备份保存在${this.inventory.backupLocation}；可下载 ZIP 备份。恢复前将检查修改后是否又有新变化。`;
+            this.panel.querySelector(':scope > p').textContent = this.inventory.host === 'tt' ? `当前宿主：TauriTavern。通过当前 TT 原生接口读写，无需 Node 插件。${this.inventory.warning}` : `当前宿主：SillyTavern。直接使用酒馆现有接口，不需要改路径、安装服务端插件或修改 config.yaml。${this.inventory.warning}`;
             this.$('[data-batch="paths"]').closest('label').hidden = true;
             this.$('[data-batch="paths"]').closest('label').nextElementSibling.hidden = true;
-            this.$('.ww-batch-confirm>small').textContent = '先保存并复读校验全部原文、预期结果及角色／身份原始 PNG，再逐项保存并校验；失败停止并尝试恢复已提交项。不是跨资源原子事务。执行期间暂停其他编辑与同步，结束后自动重新载入。';
-            this.$('.ww-batch-targets>small').textContent = 'TT 中角色卡内保存的世界书与独立世界书分别勾选。TT 导出卡时会用绑定的独立世界书重新生成内嵌内容；要替换该绑定书中实际生效的内容，也请勾选对应的独立世界书。勾选聊天范围时，所选角色的全部聊天分支一并纳入。同名 Persona 按头像 ID 区分。';
+            this.$('.ww-batch-confirm>small').textContent = '先备份原始内容及可用的角色图片、复读校验，再逐项保存并核对结果。失败时尝试恢复已提交项；不是跨资源原子事务。执行期间请暂停其他编辑与同步。';
+            this.$('.ww-batch-targets>small').textContent = '角色卡内嵌世界书和独立世界书需分别勾选；勾选聊天范围时，该卡已列出的聊天分支一并纳入。当前宿主不支持的范围会禁用。';
             if (!this.$('[data-batch-action="import-tt-backup"]')) {
                 const input = node('input'); input.type = 'file'; input.accept = '.zip,application/zip'; input.hidden = true;
-                const launch = button('导入 TT 工作台备份 ZIP', 'import-tt-backup');
+                const launch = button('导入当前账号的工作台备份 ZIP', 'import-tt-backup');
                 launch.addEventListener('click', () => input.click());
                 input.addEventListener('change', async () => {
                     const file = input.files?.[0]; if (!file) return;
@@ -355,7 +355,7 @@ export class BatchPanel {
         if (action === 'scan') await this.scan();
         if (action === 'more') await this.loadPreview(control.closest('.ww-batch-file'), Number(control.dataset.offset));
         if (action === 'select-files' || action === 'unselect-files') { this.excludedFiles = new Set(action === 'select-files' ? [] : this.snapshot.files.map(f => f.id)); this.panel.querySelectorAll('[data-batch-file]').forEach(el => { el.checked = !this.excludedFiles.has(el.value); }); this.updateSelection(); }
-        if (action === 'prepare') { this.checkWriting(); this.$('.ww-batch-confirm p').textContent = `将修改 ${this.selection.files} 个文件中的 ${this.selection.count} 处匹配。${this.client?.host === 'tt' ? '修改前保存资源内容及可用的原始图片备份。' : '修改前将创建完整文件备份。'}`; this.$('.ww-batch-confirm').hidden = false; revealInWorkbench(this.app, this.$('.ww-batch-confirm')); }
+        if (action === 'prepare') { this.checkWriting(); this.$('.ww-batch-confirm p').textContent = `将修改 ${this.selection.files} 个资源中的 ${this.selection.count} 处匹配。修改前会保存原始内容和可读取的角色图片备份。`; this.$('.ww-batch-confirm').hidden = false; revealInWorkbench(this.app, this.$('.ww-batch-confirm')); }
         if (action === 'dismiss') this.$('.ww-batch-confirm').hidden = true;
         if (action === 'backups') await this.backups();
         if (action === 'hide-backups') this.$('.ww-batch-backups').hidden = true;

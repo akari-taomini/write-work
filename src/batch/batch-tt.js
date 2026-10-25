@@ -199,7 +199,7 @@ export class TtBatchService {
     async scan(options) {
         if (this.busy) throw Error('正在写入或恢复。');
         await this.assertTarget();
-        if (!['global', 'local'].includes(options.mode) || !options.scopes?.length || options.scopes.some(scope => !TT_SCOPES.includes(scope))) throw Error('请选择 TT 已支持的作用范围。');
+        if (!['global', 'local'].includes(options.mode) || !options.scopes?.length || options.scopes.some(scope => !(this.supportedScopes || TT_SCOPES).includes(scope))) throw Error('请选择 TT 已支持的作用范围。');
         const compiled = compileRules(options.rules), inventory = await this.inventory();
         if (options.mode === 'local' && !options.fileIds?.length && !options.ownerIds?.length) throw Error('局部模式必须选择资源。');
         for (const [id, old] of this.jobs) if (Date.now() - old.created > 30 * 60 * 1000) this.jobs.delete(id);
@@ -207,7 +207,7 @@ export class TtBatchService {
         const scopes = options.scopes, applicable = resource => resource.avatarId ? scopes.includes('persona') : resource.adapter === 'character' ? scopes.some(s => ['character', 'greetings', 'world'].includes(s)) : scopes.includes(resource.adapter === 'world' ? 'world' : 'chats');
         const chosen = resource => options.mode === 'global' || options.fileIds?.includes(resource.id) || options.ownerIds?.includes(resource.avatarId || resource.id) || resource.characterOwner && options.ownerIds?.includes(resource.characterOwner);
         const resources = inventory.resources.filter(resource => applicable(resource) && chosen(resource));
-        const job = { id: uuid(), created: Date.now(), status: 'scanning', compiled, options: clone(options), files: [], counts: compiled.rules.map(() => 0), scopeCounts: {}, warnings: ['TT 逐资源备份和提交，不是跨资源原子事务；执行期间暂停其他编辑与同步。'], skipped: [], total: resources.length, scanned: 0, matches: 0, bytes: 0 };
+        const job = { id: uuid(), created: Date.now(), status: 'scanning', compiled, options: clone(options), files: [], counts: compiled.rules.map(() => 0), scopeCounts: {}, warnings: ['逐资源备份和提交，不是跨资源原子事务；执行期间暂停其他编辑与同步。'], skipped: [], total: resources.length, scanned: 0, matches: 0, bytes: 0 };
         this.jobs.set(job.id, job);
         job.done = (async () => {
             try {
@@ -269,7 +269,7 @@ export class TtBatchService {
     async manifest(id, { allowForeign = false } = {}) {
         if (!/^[a-f0-9-]{36}$/.test(id)) throw Error('备份编号无效。');
         const manifest = await this.store.getJson({ namespace: NS, table: 'transactions', key: id });
-        if (manifest.id !== id || manifest.host !== 'tt' || !manifest.dataset || typeof manifest.root !== 'string' || !Array.isArray(manifest.files)) throw Error('备份清单无效。');
+        if (manifest.id !== id || manifest.host !== this.host || !manifest.dataset || typeof manifest.root !== 'string' || !Array.isArray(manifest.files)) throw Error('备份清单无效。');
         if (!allowForeign && (manifest.dataset !== this.dataset || manifest.root !== this.root)) throw Error('备份属于迁移前或其他 TT 资料集，禁止直接恢复到当前资料；可以下载保留。');
         return manifest;
     }
@@ -323,7 +323,7 @@ export class TtBatchService {
             }
             if (!plan.length) throw Error('没有选中的修改。');
             if (plan.length > 1000) throw Error('TT 单批最多修改 1000 份资源，请分批。');
-            const tx = uuid(), manifest = { version: 1, host: 'tt', id: tx, dataset: this.dataset, root: this.root, created: new Date().toISOString(), status: 'preparing', rules: job.compiled.rules, scopes: job.options.scopes, files: [] };
+            const tx = uuid(), manifest = { version: 1, host: this.host, id: tx, dataset: this.dataset, root: this.root, created: new Date().toISOString(), status: 'preparing', rules: job.compiled.rules, scopes: job.options.scopes, files: [] };
             let started = false;
             try {
                 await this.saveManifest(manifest);
@@ -405,7 +405,7 @@ export class TtBatchService {
         } });
         if (!entries['manifest.json']) throw Error('缺少备份清单。');
         const manifest = JSON.parse(decoder.decode(entries['manifest.json']));
-        if (manifest.version !== 1 || manifest.host !== 'tt' || manifest.dataset !== this.dataset || manifest.root !== this.root || !/^[a-f0-9-]{36}$/.test(manifest.id) || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 1000) throw Error('备份包不属于当前 TT 资料集或格式不兼容。');
+        if (manifest.version !== 1 || manifest.host !== this.host || manifest.dataset !== this.dataset || manifest.root !== this.root || !/^[a-f0-9-]{36}$/.test(manifest.id) || !Array.isArray(manifest.files) || !manifest.files.length || manifest.files.length > 1000) throw Error('备份包不属于当前 TT 资料集或格式不兼容。');
         if (!['complete', 'restored', 'partially-restored', 'aborted', 'preparing', 'prepared', 'committing', 'restoring', 'needs-attention'].includes(manifest.status)) throw Error('备份事务状态无效。');
         const inventory = await this.inventory(), known = new Map(inventory.resources.map(r => [r.id, r])), ids = new Set();
         for (const record of manifest.files) {

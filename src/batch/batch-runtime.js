@@ -10,17 +10,10 @@ export async function createBatchClient(bridge) {
         const service = new TtBatchService({ context: () => bridge.context() });
         await service.init(); return service;
     }
-    const request = async (name, body) => {
-        const response = await fetch(`/api/plugins/writer-workbench-batch/${name}`, { method: 'POST', headers: bridge.context().getRequestHeaders(), body: JSON.stringify(body) });
-        if (response.status === 404) throw Error('本地批量替换模块尚未加载。请安装 plugins/writer-workbench-batch，在 config.yaml 启用 enableServerPlugins 并重启 SillyTavern。');
-        return response;
-    };
-    return {
-        host: 'st',
-        async call(name, body = {}) {
-            const response = await request(name, body), data = await response.json();
-            if (!response.ok || data.error) throw Error(data.error || `请求失败（${response.status}）。`); return data;
-        },
-        async download(id) { const response = await request('download', { id }); if (!response.ok) throw Error('备份下载失败。'); return response.blob(); },
-    };
+    // Stock SillyTavern exposes safe per-resource APIs. A browser adapter
+    // avoids forcing users to install a privileged Node server plugin.
+    const { StBatchService } = await import('./batch-st.js');
+    const service = new StBatchService({ context: () => bridge.context() });
+    await service.init();
+    return service;
 }
