@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { clone, readPath } from '../src/core/core.js';
+import { clone, readPath } from '../core.js';
 
 globalThis.__WW_TEST__ = true;
 const { Workbench } = await import('../index.js');

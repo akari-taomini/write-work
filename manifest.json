@@ -6,6 +6,7 @@
   "js": "index.js",
   "css": "style.css",
   "author": "Writer Workbench",
-  "version": "0.8.3",
+  "version": "0.6.0",
   "homePage": "https://github.com/akari-taomini/write-work"
 }
+

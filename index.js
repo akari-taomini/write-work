@@ -1,13 +1,12 @@
-import { TavernBridge } from './src/app/bridge.js';
-import { searchRanges, highlightText } from './src/core/search.js';
-import { newRegex, RegexRunner, previewDocument } from './src/core/regex-preview.js';
-import { installLayoutControls, revealInWorkbench } from './src/app/layout-controls.js';
-import { FrontendDesigner } from './src/features/frontend-designer.js';
-import { WriterLab } from './src/features/writer-lab.js';
-import { BatchPanel } from './src/batch/batch-panel.js';
-import { DraftStore, storageMessage } from './src/app/storage.js';
-import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './src/core/preset-tools.js';
-import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './src/core/core.js';
+import { TavernBridge } from './bridge.js';
+import { searchRanges, highlightText } from './search.js';
+import { newRegex, RegexRunner, previewDocument } from './regex-preview.js';
+import { installLayoutControls } from './layout-controls.js';
+import { FrontendDesigner } from './frontend-designer.js';
+import { WriterLab } from './writer-lab.js';
+import { DraftStore, storageMessage } from './storage.js';
+import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './preset-tools.js';
+import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './core.js';
 
 const bridge = new TavernBridge();
 let app;
@@ -57,7 +56,7 @@ export class Workbench {
             </header>
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
             <details class="ww-binding"><summary>绑定编辑角色卡（不切换聊天）</summary><div class="ww-row"><input class="ww-card-search text_pole" type="search" placeholder="搜索角色名或文件名" aria-label="搜索要编辑的角色卡"><select class="ww-card-select" aria-label="要绑定的角色卡"></select><button data-action="bind-card">绑定这张卡</button></div><small class="ww-bound-info"></small></details>
-            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button><button data-action="lab">创作工具</button><button data-action="batch">批量替换</button></nav>
+            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button><button data-action="lab">创作工具</button></nav>
             <div class="ww-body">
               <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label>
                 <label class="ww-regex-target-label" hidden>正则绑定到<select class="ww-regex-target" aria-label="正则绑定目标"><option value="character">绑定角色卡</option><option value="preset">所选预设</option></select></label>
@@ -98,9 +97,8 @@ export class Workbench {
             <section class="ww-exit" hidden role="alertdialog" aria-modal="true" aria-label="退出前检查草稿"><h2>还有内容没写入酒馆</h2><p class="ww-exit-message"></p><ul class="ww-exit-list"></ul><div class="ww-row"><button data-action="exit-cancel" class="ww-primary">返回继续编辑</button><button data-action="exit-confirm">保留本地草稿并退出</button><button data-action="exit-discard">不保存并退出</button></div><small>不保存并退出：放弃以上对象尚未写入的修改，恢复酒馆当前内容；本地备注和 AI 输出仍保留，已经写入酒馆的内容不会撤销。</small><p class="ww-exit-error" role="alert"></p></section>
           </div>`;
         document.body.append(this.dialog);
-        this.resumeButton = element('button', { class: 'ww-resume menu_button', hidden: '', popover: 'manual', title: '继续写卡', 'aria-label': '继续写卡' });
-        // An inline icon also works when a mobile webview has not loaded the icon font.
-        this.resumeButton.innerHTML = '<svg viewBox="0 0 24 24" width="1.25em" height="1.25em" aria-hidden="true" focusable="false"><path d="M20.2 3.8c-3.8-3.8-9.3 1.9-11.4 6.1L5 18.9l8.9-3.8c4.2-2.1 10.1-7.6 6.3-11.3Z M3 21 16 8 M8 15h5 M11 12V7" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/></svg>';
+        this.resumeButton = element('button', { class: 'ww-resume menu_button', hidden: '', title: '继续写卡', 'aria-label': '继续写卡' });
+        this.resumeButton.append(element('span', { class: 'fa-solid fa-feather', 'aria-hidden': 'true' }));
         document.body.append(this.resumeButton);
         this.resumeButton.addEventListener('click', () => this.open());
         this.dialog.querySelectorAll('button').forEach(node => { node.classList.add('menu_button'); node.type = 'button'; });
@@ -109,7 +107,6 @@ export class Workbench {
         this.layout = installLayoutControls(this);
         this.designer = new FrontendDesigner(this);
         this.lab = new WriterLab(this);
-        this.batch = new BatchPanel(this);
         // Keep the history overlay outside the scrolling shell.
         this.dialog.append(this.$('.ww-history'));
         this.dialog.append(this.$('.ww-exit'));
@@ -117,7 +114,6 @@ export class Workbench {
             const viewport = window.visualViewport;
             this.dialog.style.setProperty('--ww-viewport-height', `${viewport?.height || window.innerHeight}px`);
             this.dialog.style.setProperty('--ww-viewport-top', `${viewport?.offsetTop || 0}px`);
-            this.positionResume();
         };
         window.visualViewport?.addEventListener('resize', fitViewport);
         window.visualViewport?.addEventListener('scroll', fitViewport);
@@ -230,7 +226,6 @@ export class Workbench {
         catch (error) { console.error('[Writer Workbench]', error); this.message(error.message || String(error), true); }
         finally {
             controls.forEach((x, i) => { x.disabled = disabled[i]; });
-            this.batch?.syncScopeCapabilities();
             this.busy = false; this.dialog.removeAttribute('aria-busy');
             this.$('[data-action="accept"]').disabled = !this.suggestion;
             this.$('[data-action="append"]').disabled = !this.suggestion;
@@ -277,7 +272,7 @@ export class Workbench {
     }
     async open() {
         if (this.minimized) {
-            this.minimized = false; this.showResume(false); this.syncTheme(); this.dialog.show(); this.layout.restore(); this.renderCardChoices(); this.schedulePreview(); this.designer.schedule(); return;
+            this.minimized = false; this.resumeButton.hidden = true; this.syncTheme(); this.dialog.show(); this.layout.restore(); this.renderCardChoices(); this.schedulePreview(); this.designer.schedule(); return;
         }
         this.syncTheme(); this.dialog.show(); this.layout.restore(); this.renderCardChoices();
         await this.run(async () => {
@@ -311,30 +306,11 @@ export class Workbench {
         await this.loadWriting(); this.updateBinding(); this.renderCardChoices();
         await this.switchTab(['world', 'preset'].includes(this.tab) ? this.tab : this.tab === 'regex' ? 'regex' : 'character');
     }
-    positionResume() {
-        const viewport = window.visualViewport;
-        const left = viewport?.offsetLeft || 0, top = viewport?.offsetTop || 0;
-        const width = viewport?.width || window.innerWidth, height = viewport?.height || window.innerHeight;
-        const rect = this.resumeButton.getBoundingClientRect();
-        const gap = 12, bottom = 80;
-        this.resumeButton.style.left = `${Math.max(left + gap, left + width - rect.width - gap)}px`;
-        this.resumeButton.style.top = `${Math.max(top + gap, top + height - rect.height - bottom)}px`;
-    }
-    showResume(visible) {
-        if (!visible) {
-            if (typeof this.resumeButton.hidePopover === 'function' && this.resumeButton.matches(':popover-open')) this.resumeButton.hidePopover();
-            this.resumeButton.hidden = true; return;
-        }
-        this.resumeButton.hidden = false;
-        // Top-layer placement avoids clipping and other extensions covering the shortcut.
-        if (typeof this.resumeButton.showPopover === 'function' && !this.resumeButton.matches(':popover-open')) this.resumeButton.showPopover();
-        this.positionResume();
-    }
     async minimize() {
         await this.persist(); await this.persistWriting();
         if (this.designer.loaded) await this.designer.persist();
         await this.lab.persist();
-        this.minimized = true; this.cancelPreview(); this.designer.cancel(); this.dialog.close(); this.showResume(true);
+        this.minimized = true; this.cancelPreview(); this.designer.cancel(); this.dialog.close(); this.resumeButton.hidden = false;
     }
     unwrittenDocuments() { return [...this.docs.values()].filter(doc => !equal(doc.base, doc.draft)); }
     async close({ confirmed = false } = {}) {
@@ -353,7 +329,7 @@ export class Workbench {
             this.$('[data-action="exit-cancel"]').focus();
             return false;
         }
-        this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.showResume(false); this.dialog.close(); return true;
+        this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.resumeButton.hidden = true; this.dialog.close(); return true;
     }
     cancelExit() {
         this.$('.ww-exit').hidden = true;
@@ -378,7 +354,7 @@ export class Workbench {
             if (this.failedPersistence.size) throw new Error('仍有本地备份失败，请返回检查。');
             if (this.designer.loaded) await this.designer.persist();
             await this.lab.persist();
-            this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.showResume(false); this.dialog.close();
+            this.cancelExit(); this.cancelPreview(); this.designer.cancel(); this.resumeButton.hidden = true; this.dialog.close();
         } catch (error) {
             this.$('.ww-exit-error').textContent = `未能完成退出：${error.message}。已恢复成功的对象不再列为未保存；其余草稿仍保留，可重试或返回编辑。`;
         } finally { this.discarding = false; }
@@ -395,7 +371,6 @@ export class Workbench {
         } catch { select.append(option('', '跟随酒馆当前设置')); }
     }
     async switchTab(tab) {
-        if (this.batch && !this.batch.panel.hidden) this.batch.close();
         await this.persist();
         const previousPreset = ['preset', 'preset-regex'].includes(this.doc?.meta.kind) ? this.doc.meta : null;
         this.cancelPreview();
@@ -758,10 +733,9 @@ export class Workbench {
         const rect = mark.getBoundingClientRect(), editorRect = this.editor.getBoundingClientRect();
         this.editor.scrollTop += rect.top - editorRect.top - this.editor.clientHeight / 2;
         this.syncHighlights();
-        revealInWorkbench(this, this.$('.ww-editor-wrap'), { block: 'nearest' });
+        this.$('.ww-editor-wrap').scrollIntoView?.({ block: 'nearest' });
     }
     async save() {
-        if (this.batch?.requiresReload) throw Error('批量修改后请先重新载入酒馆，再继续写入。');
         if (!this.doc) throw new Error('请先选择要编辑的内容。');
         if (['character', 'regex'].includes(this.doc.meta.kind)) this.bridge.assertTarget?.(this.doc.meta.id);
         await this.persist();
@@ -962,9 +936,8 @@ export class Workbench {
         }
         const action = button.dataset.action;
         if (action === 'center') { this.layout.center(); return; }
-        if (action === 'batch') return this.run(() => this.batch.open());
-        if (action === 'designer') { this.batch?.close(); return this.run(() => this.designer.open()); }
-        if (action === 'lab') { this.batch?.close(); return this.run(() => this.lab.open()); }
+        if (action === 'designer') return this.run(() => this.designer.open());
+        if (action === 'lab') return this.run(() => this.lab.open());
         if (action === 'minimize') return this.run(() => this.minimize());
         if (action === 'close') return this.close();
         if (action === 'exit-cancel') { this.cancelExit(); return; }
@@ -972,7 +945,7 @@ export class Workbench {
         if (action === 'exit-discard') return this.run(() => this.discardAndExit());
         if (action === 'ai' || action === 'ai-close') {
             this.$('.ww-assistant').hidden = action === 'ai-close';
-            if (action === 'ai') { revealInWorkbench(this, this.$('.ww-assistant'), { behavior: 'smooth' }); this.$('.ww-instruction').focus({ preventScroll: true }); }
+            if (action === 'ai') { this.$('.ww-assistant').scrollIntoView?.({ block: 'start', behavior: 'smooth' }); this.$('.ww-instruction').focus({ preventScroll: true }); }
             return;
         }
         if (action === 'search') { this.$('.ww-search').hidden = !this.$('.ww-search').hidden; this.searchSource = this.$('.ww-search').hidden ? 'filter' : 'find'; this.updateHighlights(); if (!this.$('.ww-search').hidden) this.$('.ww-find').focus(); return; }
@@ -991,7 +964,7 @@ export class Workbench {
             else if (action === 'preview-advice') {
                 this.$('.ww-assistant').hidden = false; this.$('.ww-ai-mode').value = 'current';
                 this.$('.ww-instruction').placeholder = '例如：状态栏改为两列，手机上自动换行，保留 $1 等捕获组。';
-                revealInWorkbench(this, this.$('.ww-instruction'), { block: 'center' });
+                this.$('.ww-instruction').scrollIntoView?.({ block: 'center' });
             }
             else if (action === 'test') {
                 if (this.doc?.meta.kind !== 'character') throw new Error('请回到人物设定或开场白，保存角色卡后再试聊；世界书和预设请先分别写入。');
@@ -1034,22 +1007,11 @@ export class Workbench {
 }
 
 export function install() {
-    if (document.getElementById('writer-workbench-settings')) return;
+    if (document.getElementById('writer-workbench-launch')) return;
+    const launch = element('button', { id: 'writer-workbench-launch', type: 'button', class: 'menu_button', title: '打开写卡工作台' });
+    launch.append(element('span', { class: 'fa-solid fa-pen-to-square', 'aria-hidden': 'true' }), element('span', {}, '写卡工作台'));
     const wrapper = element('div', { id: 'writer-workbench-settings', class: 'extension_container' });
-    const drawer = element('div', { class: 'inline-drawer' });
-    const header = element('div', { class: 'inline-drawer-toggle inline-drawer-header', role: 'button', tabindex: '0', 'aria-controls': 'writer-workbench-entry-controls' });
-    header.append(element('b', {}, '写卡工作台'), element('div', { class: 'inline-drawer-icon fa-solid fa-circle-chevron-down down', 'aria-hidden': 'true' }));
-    const content = element('div', { id: 'writer-workbench-entry-controls', class: 'inline-drawer-content' });
-    const launch = element('button', { id: 'writer-workbench-launch' }, '打开写卡工作台');
-    const setting = element('label', { class: 'checkbox_label', for: 'writer-workbench-show-wand' });
-    const checkbox = element('input', { type: 'checkbox', id: 'writer-workbench-show-wand' });
-    const preferenceKey = 'writer-workbench-show-wand';
-    checkbox.checked = true;
-    try { checkbox.checked = bridge.context().accountStorage.getItem(preferenceKey) !== 'false'; }
-    catch (error) { console.warn('写卡工作台：入口设置暂时无法读取。', error); }
-    setting.append(checkbox, element('span', {}, '在魔法棒菜单显示入口'));
-    content.append(launch, setting);
-    drawer.append(header, content); wrapper.append(drawer);
+    wrapper.append(launch);
     const target = document.querySelector('#extensions_settings2') || document.querySelector('#extensions_settings');
     (target || document.body).append(wrapper);
     if (!target) wrapper.classList.add('ww-launch-floating');
@@ -1057,32 +1019,11 @@ export function install() {
         try { app ||= new Workbench(); if (!app.dialog.open) await app.open(); }
         catch (error) { globalThis.toastr?.error(error.message, '写卡工作台'); console.error(error); }
     };
-    // Clicks use Tavern's own delegated drawer handler, including its theme and animation.
-    header.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); header.click(); } });
     launch.addEventListener('click', open);
-    const updateWand = () => {
-        document.getElementById('writer-workbench-wand')?.remove();
-        const wand = document.querySelector('#extensionsMenu');
-        if (!wand || !checkbox.checked) return;
-        const shortcut = element('div', { id: 'writer-workbench-wand', class: 'list-group-item flex-container flexGap5 interactable', tabindex: '0', role: 'button' }, '✎ 写卡工作台');
-        shortcut.addEventListener('click', open);
-        shortcut.addEventListener('keydown', event => { if (['Enter', ' '].includes(event.key)) { event.preventDefault(); open(); } });
-        wand.append(shortcut);
-    };
-    checkbox.addEventListener('change', () => {
-        try { bridge.context().accountStorage.setItem(preferenceKey, String(checkbox.checked)); }
-        catch (error) {
-            checkbox.checked = !checkbox.checked;
-            globalThis.toastr?.error('入口设置保存失败，请重试。', '写卡工作台');
-            console.error(error); return;
-        }
-        updateWand();
-    });
-    updateWand();
+    const wand = document.querySelector('#extensionsMenu');
+    if (wand) { const shortcut = element('div', { class: 'list-group-item flex-container flexGap5 interactable', tabindex: '0', role: 'button' }, '✎ 写卡工作台'); shortcut.addEventListener('click', open); shortcut.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); open(); } }); wand.append(shortcut); }
 }
 if (!globalThis.__WW_TEST__) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
     else install();
 }
-
-
