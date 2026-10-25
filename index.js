@@ -4,7 +4,6 @@ import { newRegex, RegexRunner, previewDocument } from './src/core/regex-preview
 import { installLayoutControls, revealInWorkbench } from './src/app/layout-controls.js';
 import { FrontendDesigner } from './src/features/frontend-designer.js';
 import { WriterLab } from './src/features/writer-lab.js';
-import { BatchPanel } from './src/batch/batch-panel.js';
 import { DraftStore, storageMessage } from './src/app/storage.js';
 import { insertRelative, movePrompt, exportPromptPack, importPromptPack } from './src/core/preset-tools.js';
 import { CHARACTER_FIELDS, clone, createId, equal, mergeThreeWay, readPath, writePath, snapshot, newEntry, applySuggestion, opaqueThemeColor } from './src/core/core.js';
@@ -57,7 +56,7 @@ export class Workbench {
             </header>
             <div class="ww-connection"><span class="ww-api"></span><label>写作预设 <select class="ww-writing-preset" aria-label="写作使用的预设"></select></label><small>与酒馆同步 · 无需另填 API</small></div>
             <details class="ww-binding"><summary>绑定编辑角色卡（不切换聊天）</summary><div class="ww-row"><input class="ww-card-search text_pole" type="search" placeholder="搜索角色名或文件名" aria-label="搜索要编辑的角色卡"><select class="ww-card-select" aria-label="要绑定的角色卡"></select><button data-action="bind-card">绑定这张卡</button></div><small class="ww-bound-info"></small></details>
-            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button><button data-action="lab">创作工具</button><button data-action="batch">批量替换</button></nav>
+            <nav class="ww-tabs" aria-label="内容类型"><button data-tab="character">人物设定</button><button data-tab="greetings">开场白</button><button data-tab="world">世界书</button><button data-tab="preset">预设</button><button data-tab="regex">局部正则</button><button data-action="designer">前端正则设计</button><button data-action="lab">创作工具</button></nav>
             <div class="ww-body">
               <aside class="ww-sidebar"><label class="ww-resource-label">编辑对象<select class="ww-resource" aria-label="正在编辑的对象"></select></label>
                 <label class="ww-regex-target-label" hidden>正则绑定到<select class="ww-regex-target" aria-label="正则绑定目标"><option value="character">绑定角色卡</option><option value="preset">所选预设</option></select></label>
@@ -109,7 +108,6 @@ export class Workbench {
         this.layout = installLayoutControls(this);
         this.designer = new FrontendDesigner(this);
         this.lab = new WriterLab(this);
-        this.batch = new BatchPanel(this);
         // Keep the history overlay outside the scrolling shell.
         this.dialog.append(this.$('.ww-history'));
         this.dialog.append(this.$('.ww-exit'));
@@ -394,7 +392,6 @@ export class Workbench {
         } catch { select.append(option('', '跟随酒馆当前设置')); }
     }
     async switchTab(tab) {
-        if (this.batch && !this.batch.panel.hidden) this.batch.close();
         await this.persist();
         const previousPreset = ['preset', 'preset-regex'].includes(this.doc?.meta.kind) ? this.doc.meta : null;
         this.cancelPreview();
@@ -760,7 +757,6 @@ export class Workbench {
         revealInWorkbench(this, this.$('.ww-editor-wrap'), { block: 'nearest' });
     }
     async save() {
-        if (this.batch?.requiresReload) throw Error('批量修改后请先重新载入酒馆，再继续写入。');
         if (!this.doc) throw new Error('请先选择要编辑的内容。');
         if (['character', 'regex'].includes(this.doc.meta.kind)) this.bridge.assertTarget?.(this.doc.meta.id);
         await this.persist();
@@ -961,9 +957,8 @@ export class Workbench {
         }
         const action = button.dataset.action;
         if (action === 'center') { this.layout.center(); return; }
-        if (action === 'batch') return this.run(() => this.batch.open());
-        if (action === 'designer') { this.batch?.close(); return this.run(() => this.designer.open()); }
-        if (action === 'lab') { this.batch?.close(); return this.run(() => this.lab.open()); }
+        if (action === 'designer') return this.run(() => this.designer.open());
+        if (action === 'lab') return this.run(() => this.lab.open());
         if (action === 'minimize') return this.run(() => this.minimize());
         if (action === 'close') return this.close();
         if (action === 'exit-cancel') { this.cancelExit(); return; }
