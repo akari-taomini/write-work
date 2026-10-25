@@ -1,39 +1,29 @@
-# 文件目录与依赖关系
+# 源码目录与维护说明
 
-这个目录结构将 **酒馆可直接识别的入口文件留在仓库根目录**，其余按职责收纳。整理仅改变仓库源码的存放位置与相对导入路径，不主动重写业务逻辑。
+本仓库将**普通前端扩展**作为 GitHub 安装入口；扩展加载清单必须保留在仓库根目录。
 
 | 路径 | 用途 |
 | --- | --- |
-| `manifest.json` | SillyTavern 扩展加载清单；仍指向根目录 `index.js`、`style.css` |
-| `index.js` | 前端主入口；从 `src/` 加载模块 |
-| `style.css` | 样式入口 |
-| `src/app/bridge.js` | SillyTavern 数据接口与写入 |
-| `src/app/layout-controls.js` | 工作台布局、滚动与元素定位 |
-| `src/app/storage.js` | 草稿及历史版本存储 |
-| `src/core/core.js` | 通用数据结构与合并工具 |
-| `src/core/search.js` | 搜索、高亮 |
-| `src/core/regex-preview.js` | 正则解析与预览 |
-| `src/core/preset-tools.js` | 预设条目编辑工具 |
-| `src/features/frontend-designer.js` | 前端正则设计 |
-| `src/features/writer-lab.js` | 创作工具 |
-| `src/batch/batch-engine.js` | 批量替换匹配算法 |
-| `src/batch/batch-adapters.js` | 可编辑字段与数据适配 |
-| `src/batch/batch-panel.js` | 批量替换前端面板 |
-| `src/batch/batch-server.js` | 批量替换服务端路由与备份 |
-| `plugins/writer-workbench-batch/index.js` | 独立安装的服务端插件入口 |
-| `tests/` | 现有测试，导入路径已更新 |
-| `docs/full-guide.md` | 旧版完整 README 归档，保留详细功能文档 |
+| `manifest.json`、`index.js`、`style.css` | 酒馆前端扩展的固定入口 |
+| `src/app/` | 酒馆 Bridge、布局和本地草稿存储 |
+| `src/core/` | 核心函数、查找、预设、正则预览 |
+| `src/features/` | AI 创作工具、前端正则设计 |
+| `src/batch/batch-engine.js`、`batch-adapters.js` | TT/PC 共用匹配与可编辑字段处理 |
+| `src/batch/batch-runtime.js` | 运行环境选择；检测 TT / SillyTavern |
+| `src/batch/batch-tt.js` | TT 客户端数据读写、备份与恢复 |
+| `src/batch/batch-panel.js` | 批量替换交互面板 |
+| `src/batch/batch-server.js` | 仅 PC SillyTavern 服务器运行的磁盘批量替换 |
+| `vendor/fflate.js` | TT ZIP 备份与导入依赖，必须保留 LICENSE |
+| `plugins/writer-workbench-batch/` | 可选 Node 服务端插件入口，须手动安装在酒馆服务器根目录 |
+| `tests/` | 测试源文件，用户不需要单独操作 |
+| `docs/` | 安装文档及 TT 兼容性实测记录 |
 
-## 关键路径（勿随意挪动）
+### 关键约束
 
-1. `manifest.json` 的 `js`、`css` 使用扩展根目录的相对路径，所以 `index.js` 和 `style.css` 仍保留在仓库根目录。
-2. 服务端插件的 `index.js` 目前使用 `../../data/default-user/extensions/write-work/src/batch/batch-server.js`。**仓库中的 `plugins/` 文件夹不会被 SillyTavern 自动当作服务端插件安装**，需要复制到酒馆安装根目录的 `plugins/`。自定义用户目录与不同扩展文件夹名须调整这个固定路径。
-3. `src/batch/batch-server.js` 对 SillyTavern 本体 `src/png/encode.js` 的相对导入已增加两级 `../`。这依赖酒馆的实际安装目录结构。
-4. `tests/batch.test.js` 与 `tests/batch-routes.test.js` 依赖完整 SillyTavern 环境，独立下载仓库后无法保证直接运行。
+1. `manifest.json` 的 `js` 和 `css` 字段仍分别指向根目录 `index.js` 与 `style.css`。
+2. `plugins/writer-workbench-batch/index.js` 固定指向 `../../data/default-user/extensions/write-work/src/batch/batch-server.js`。只有复制到 SillyTavern 的根目录 `plugins/` 才能正常解析相对路径。
+3. `src/batch/batch-server.js` 的 `../../../../../../src/png/encode.js` 指向安装根目录的 SillyTavern 原生模块，**不是**扩展目录内部文件。
+4. TT 的 `src/batch/batch-tt.js` 相对导入 `../../vendor/fflate.js`，不能把 `vendor` 排除在扩展安装包之外。
+5. `tests/batch.test.js` 依赖 SillyTavern 源码，无法通过纯前端测试代替。
 
-## 后续维护建议
-
-- 新增纯函数放 `src/core/`；UI 交互放 `src/features/` 或 `src/app/`。
-- 批量替换相关功能统一放 `src/batch/`，不要重新在仓库根目录新增同名模块。
-- 修改模块位置后同步更新引用它的源文件、服务端入口和测试。
-- 旧的详细功能说明保存在 `docs/full-guide.md`；以后可以按主题继续拆成安装、功能和历史更新文档。
+**请不要再为 TT 新建 Node 服务端插件或混用 PC 的服务端 API。** 0.8.2 已按宿主分别选择后端适配。

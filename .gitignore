@@ -1,13 +1,9 @@
-# Local dependency installs and generated files
 node_modules/
-.npm/
 coverage/
-.nyc_output/
 dist/
 build/
 *.log
 .DS_Store
-Thumbs.db
 .env
 .env.*
 !.env.example

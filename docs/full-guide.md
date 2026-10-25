@@ -1,8 +1,18 @@
-> **文档归档说明**：此页保留 0.7.1 及更早版本的完整功能说明。最新目录结构请以 [项目目录说明](project-structure.md) 为准；下方较早版本日志中的路径与测试状态可能是历史信息。
-
-# 写卡工作台 · 0.7.1 本地改造版
+# 写卡工作台 · 0.8.2 本地改造版
 
 本版在原作者的 0.6.0 基础上扩充，保留原作者署名与项目地址，未向上游发布。
+
+## 0.8.2 导入／迁移兼容
+
+TT 导入资料或更换目录后，若导入包的工作台标记仍指向旧目录，批量替换提供登记当前资料集的入口。登记先归档旧标记，再建立新 ID，保留旧备份并隔离恢复入口，不修改业务资料。完成后重新选择资源、扫描即可。PC 服务端保持原逻辑。
+
+## 0.8.1 修复
+
+修正 TT 绑定世界书的角色卡保存校验失败及回退误判。角色源数据改读 `/api/characters/get` 的 `json_data`，PNG 备份改读原始资源，不再把会重建世界书的导出结果当作原文件。PC 服务端逻辑保持不变，细节见 [TT 兼容说明](TT-COMPATIBILITY.md)。
+
+## 0.8.0 TauriTavern 兼容
+
+同一份前端自动识别宿主：SillyTavern 继续使用原服务端插件，TauriTavern 使用当前 TT 原生接口，无需修改 `config.yaml` 或安装服务端模块。TT 已在 Windows 2.4.0 实机验证身份、聊天、角色卡和世界书的替换、备份、恢复；手机及其他系统尚未实机验证。详见 [TT 兼容说明](TT-COMPATIBILITY.md)。
 
 ## 0.7.1 使用说明
 
@@ -14,7 +24,7 @@
 - “前端正则设计”、创作工具和内容定位只滚动工作台内部，不再调用会滚动外层页面的 `scrollIntoView()`。设计器不再参与内容区的压缩，面板边界不允许内容外溢。预览仍在无脚本权限的 sandbox iframe 内。
 - 新增“批量替换”：多条规则、范围组合、局部资源选择、逐处差异、取消匹配、规则组合保存、扫描取消、文件备份及冲突回滚。
 
-### 本地模块
+### SillyTavern 本地模块（TT 不适用）
 
 前端位于 `data/default-user/extensions/write-work`；配套服务端插件位于 `plugins/writer-workbench-batch`。当前安装使用 `default-user` 中的共享模块。两部分需要一起更新，不能只复制前端到其他用户后删除原共享模块。
 
@@ -144,17 +154,15 @@
 
 ## 安装
 
-### 通过 GitHub 安装前端扩展
+1. 解压安装包，找到 `sillytavern-writer-workbench` 文件夹。
+2. 把整个文件夹放到酒馆安装目录的 `public/scripts/extensions/third-party/` 下。
+3. 确认最终路径为 `public/scripts/extensions/third-party/sillytavern-writer-workbench/manifest.json`，不要多套一层文件夹。
+4. 刷新酒馆页面。在扩展设置中展开 **写卡工作台**，点击“打开写卡工作台”；也可在栏内开启魔法棒菜单入口后从聊天输入框旁进入。
+5. 打开工作台，在顶部搜索并绑定要编辑的角色卡；无需切换当前聊天。
 
-在 SillyTavern 的“安装扩展”中填写 `https://github.com/akari-taomini/write-work.git`，安装完成后刷新页面。已有旧版请更新同一个扩展，不要同时安装两份。仓库根目录必须直接包含 `manifest.json`、`index.js`、`style.css` 等文件。
+这是手动安装包，不需要安装 Node 依赖、不需要编译。仓库地址为 `https://github.com/akari-taomini/write-work.git`，可用于酒馆“安装扩展”；仓库版本取决于作者已上传的文件，本地安装包更新不等于已同步仓库。不要同时装两份扩展。
 
-也可手动将仓库根目录的前端源码放到酒馆当前用户的扩展目录 `data/default-user/extensions/write-work/`（以实际用户名或所选数据目录为准）。打开扩展设置中的“写卡工作台”即可使用。
-
-### 批量替换服务端模块（需要单独安装）
-
-本仓库同时附带 `plugins/writer-workbench-batch/`，该文件夹位于 **仓库内** 不代表 SillyTavern 会自动加载它。使用服务器端批量替换时，请将它复制到 **酒馆安装根目录的** `plugins/writer-workbench-batch/`；确保扩展源码能在 `data/default-user/extensions/write-work/src/batch/batch-server.js` 路径找到（如使用其他用户目录或版本，请先核对实际路径与导入语句），在酒馆 `config.yaml` 中启用 `enableServerPlugins: true`，重启酒馆。
-
-其他编辑功能不需要额外的 Node 安装步骤。若酒馆由托管平台运营，需由有权限的人部署服务端插件。本项目面向 SillyTavern，不是 TAVO 插件。
+如果酒馆由托管平台运营，需要通过平台的文件管理器安装，或让管理员放入上述目录。此扩展面向 SillyTavern，不是 TAVO 插件。
 
 ## 日常使用
 
@@ -195,13 +203,13 @@ AI 优先通过酒馆的普通消息生成接口运行，沿用当前连接、�
 
 角色卡保存只提交改动字段；世界书与预设保留未编辑的数据。保存前重新读取并比较：不同字段的修改可以合并，同一字段同时变化会停止写入。冲突时可以先导出草稿，再点击“保留历史并重新载入酒馆版本”，原草稿保留在历史中。
 
-当前版本为 0.6.0，接口按已查阅的 SillyTavern 官方 release 源码实现。本次完成创作工具流程、正则原始文本预览、标题编辑、预设变动后退出及无 assistant 预填充请求的针对性检查，未跑完整测试套件。旧版或修改版酒馆可能缺少所需接口；尚未在你的实际酒馆、手机浏览器和真实 API 上联调，模型的文本质量和格式遵循仍需实际使用确认。
+当前改造版为 0.8.2，保留原有写卡功能，增加批量替换和 TT 原生适配。旧版或修改版酒馆可能缺少所需接口；手机设备及真实模型生成仍需实际使用验证。
 
 自动化检查覆盖世界书旧接口兼容、新建同名保护、绑定另一张卡后保存局部正则、不切换聊天、未绑定入口、HTML 预览结构、正则捕获组及真实 Worker 超时终止，以及原有搜索、批量导入、撤回、冲突保护、移动端样式和大稿本地保存。模拟 DOM 样式检查和接口模拟不等同于真实手机截图或真实酒馆端到端测试。
 
 ## 开发测试
 
-运行时没有第三方依赖。开发测试需要 Node.js 20.19+ 和 `npm install` 安装 Happy DOM、fake-indexeddb，之后执行 `npm test`。在不允许创建测试子进程的环境可使用 `node --test --test-isolation=none tests/*.test.js`（需支持该选项的 Node 版本）。
+TT ZIP 处理使用随包附带的 `vendor/fflate.js`（许可同目录），前端无需额外安装依赖。PC 服务端复用 SillyTavern 已有依赖。服务端测试须在 SillyTavern 扩展目录执行 `npm test`，以解析其原生模块和依赖。
 
 接口参考：
 
@@ -211,3 +219,4 @@ AI 优先通过酒馆的普通消息生成接口运行，沿用当前连接、�
 - [世界书接口](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/world-info.js)
 - [预设管理](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/preset-manager.js)
 - [局部正则字段及替换规则](https://github.com/SillyTavern/SillyTavern/blob/release/public/scripts/extensions/regex/engine.js)
+

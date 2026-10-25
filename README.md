@@ -1,57 +1,51 @@
-# 写卡工作台（Writer Workbench）
+# 写卡工作台 · Writer Workbench
 
-适用于 **SillyTavern** 的写卡、世界书、开场白与预设编辑扩展。当前版本 **0.7.1**。
-
-本项目在原作者 0.6.0 版本基础上扩充；保留原项目的署名及上游链接。版本更新内容、完整使用手册和兼容性说明见 [完整说明](docs/full-guide.md)。
+一个适用于 SillyTavern 的写卡扩展，包含人物设定、开场白、世界书、预设编辑、正则预览与创作工具。版本 **0.8.2**。
 
 ## 安装
 
-在 SillyTavern 的 **扩展 → 安装扩展** 中填入：
+普通用户在酒馆的「扩展 → 安装扩展」粘贴以下地址即可：
 
 ```text
 https://github.com/akari-taomini/write-work.git
 ```
 
-刷新酒馆，打开扩展设置里的「写卡工作台」。已有旧版请更新原有扩展，不要重复安装。
+安装后刷新页面，在扩展设置打开「写卡工作台」。**不需要手动创建 `data/default-user/extensions/` 目录，也不要把整个 ZIP 外层的 `data/` 目录上传为仓库根目录。**
 
-**批量替换需要额外安装服务端插件**：将仓库内的 `plugins/writer-workbench-batch/` 放到 SillyTavern 安装根目录的 `plugins/writer-workbench-batch/`，在 `config.yaml` 启用 `enableServerPlugins: true` 并重启。该模块目前假定扩展位于 `data/default-user/extensions/write-work/`，若实际安装路径不同，需要调整服务端插件的导入路径。其余写卡功能不需要服务端模块。
+## 兼容性
 
-## 功能
+- **SillyTavern：** 写卡、世界书、预设和编辑器内的查找/替换使用普通前端扩展即可。跨文件批量替换额外依赖服务端插件，需要管理员单独安装。
+- **TauriTavern：** 0.8.2 内置 `src/batch/batch-tt.js` 适配层；TT 跨资源批量替换不依赖 Node 服务端插件。随包测试说明记录了 **Windows TauriTavern 2.4.0** 的实际读写及恢复测试；**Android/iOS/macOS/Linux 尚未实机验证**。TT 可用范围和备份注意事项见 [TT 适配说明](docs/tauritavern.md)。
+- **普通安装：** 服务器端 `plugins/` 目录是可选 PC 功能的源码，不是普通用户必须复制的安装步骤。缺少该模块时，PC 的跨文件批量替换不可用，但普通写卡功能不受影响。
 
-- 人物设定、开场白、世界书和预设提示词编辑
-- AI 写卡与修改、创作工具、前端正则设计
-- 查找替换、草稿历史、导入导出、备份与冲突保护
-- 可选服务端批量替换（指定范围扫描、预览、执行及恢复）
-
-## 项目目录
+## 目录
 
 ```text
 write-work/
-├── manifest.json           # SillyTavern 扩展清单（必须保留根目录）
-├── index.js                # 浏览器入口（必须保留根目录）
-├── style.css               # 样式入口（必须保留根目录）
+├── manifest.json          # 必须位于仓库根目录
+├── index.js               # 前端入口
+├── style.css              # 样式入口
 ├── src/
-│   ├── app/                # 酒馆交互、布局和草稿存储
-│   ├── core/               # 基础工具、预设和正则处理
-│   ├── features/           # 前端正则设计、创作工具
-│   └── batch/              # 批量替换前端、服务端及算法
-├── plugins/
-│   └── writer-workbench-batch/  # 需单独复制到酒馆 plugins 的服务端入口
-├── tests/                  # 自动化测试
-├── docs/                   # 文档
-└── package.json
+│   ├── app/               # 酒馆接口、布局、存储
+│   ├── core/              # 通用逻辑、正则、搜索、预设
+│   ├── features/          # 创作工具和正则设计器
+│   └── batch/             # 批量替换：共享逻辑、TT 与 PC 适配
+├── vendor/                # TT 备份 ZIP 所需依赖及其许可证
+├── plugins/               # 可选 PC 服务端插件（需要单独部署）
+├── tests/                 # 自动化测试
+└── docs/                  # 完整说明和兼容性记录
 ```
 
-文件移动后，入口与模块导入路径已同步更新。**不要单独移动 `src/` 中的文件**，它们互相引用。
+详见 [目录和开发说明](docs/project-structure.md)、[0.8.2 完整使用文档](docs/full-guide.md)、[旧版手动安装说明](docs/install-original.md)。
 
-详细的文件职责与路径约束见 [目录说明](docs/project-structure.md)，此前完整文档见 [完整说明](docs/full-guide.md)。
+## 额外安装：仅 PC 跨文件批量替换
 
-## 开发
+如果使用 **SillyTavern Node.js 版本**，且确实需要扫描、备份与替换不同角色卡、聊天及数据文件，可由有权限的管理员把仓库的 `plugins/writer-workbench-batch/` 复制到**酒馆安装根目录**的 `plugins/writer-workbench-batch/`，并在 `config.yaml` 启用 `enableServerPlugins: true`，然后重启。当前服务端入口使用 `data/default-user/extensions/write-work/` 的固定路径；改过用户或安装文件夹名时需要同步修改。
 
-`package.json` 中保留 `npm test` 测试命令。涉及服务端的测试依赖 SillyTavern 的源码与 Node 依赖，请在完整的开发环境中运行，不要把仅通过静态检查当成端到端验证。
+TauriTavern **不要安装**这个 Node 服务端插件，它使用自己的适配层。
 
-## 备注
+## 开发与测试
 
-- 草稿存储在当前浏览器，正式修改前请备份。
-- 批量替换涉及真实用户数据，执行前先看差异预览，保留备份。
-- 原作者与历史版本信息请参考 [完整说明](docs/full-guide.md)。
+开发人员可运行 `npm test`；部分测试依赖完整的 SillyTavern 源码与依赖，未必能在单独下载的扩展目录内通过。整理仅按职责移动文件并修正相对引用，不主动改动批量替换业务流程。
+
+> 更新前请备份个人资料及工作台草稿。此仓库不附带私人备份或个人数据。

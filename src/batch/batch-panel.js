@@ -1,6 +1,7 @@
 import { validateRules, previewSegments } from './batch-engine.js';
 import { BATCH_SCOPES } from './batch-adapters.js';
 import { revealInWorkbench } from '../app/layout-controls.js';
+import { createBatchClient } from './batch-runtime.js';
 
 const node = (tag, text = '', className = '') => { const el = document.createElement(tag); el.textContent = text; el.className = className; return el; };
 const button = (text, action) => { const el = node('button', text, 'menu_button'); el.type = 'button'; el.dataset.batchAction = action; return el; };
@@ -62,7 +63,24 @@ export class BatchPanel {
     }
     key() { return `ww:${this.app.namespace}:batch-config`; }
     rules() { return [...this.panel.querySelectorAll('.ww-batch-rule')].map(row => ({ find: row.querySelector('[data-find]').value, replace: row.querySelector('[data-replace]').value })); }
-    scopes() { return [...this.panel.querySelectorAll('[data-batch-scope]:checked')].map(x => x.value); }
+    scopes() { return [...this.panel.querySelectorAll('[data-batch-scope]:checked')].map(x => x.value).filter(scope => !this.inventory?.supportedScopes || this.inventory.supportedScopes.includes(scope)); }
+    syncScopeCapabilities() {
+        if (!this.inventory?.supportedScopes) return;
+        this.panel.querySelectorAll('[data-batch-scope]').forEach(input => {
+            if (!this.inventory.supportedScopes.includes(input.value)) { input.disabled = true; input.checked = false; input.title = '当前 TT 适配暂未开放此范围'; }
+        });
+        this.$('[data-batch-action="scan"]').disabled = !!this.inventory.datasetBinding || !!this.scanning || !!this.operation;
+        this.$('[data-batch-action="backups"]').disabled = !!this.inventory.datasetBinding || !!this.scanning || !!this.operation;
+    }
+    renderDatasetBinding() {
+        this.$('.ww-batch-dataset')?.remove();
+        const binding = this.inventory?.datasetBinding; if (!binding) return;
+        const area = node('fieldset', '', 'ww-batch-dataset');
+        area.append(node('legend', '导入／迁移后的资料集登记'), node('p', `当前 TT 目录：${binding.currentRoot}`), node('p', `导入包记录的旧目录：${binding.previousRoot}`));
+        area.append(node('p', '确认当前目录就是本次导入后要使用的资料。登记会建立新的资料集标记，保留旧备份并隔离其恢复入口；不会替换、删除或恢复业务资料。之后请重新勾选资源并扫描。'));
+        area.append(button('确认将当前导入资料登记为新资料集', 'register-dataset'));
+        this.panel.querySelector(':scope > p').after(area);
+    }
     async persist() {
         try { await this.app.store.set(this.key(), { rules: this.rules(), scopes: this.scopes(), mode: this.$('[data-batch="mode"]').value, targets: [...this.targets], paths: this.$('[data-batch="paths"]').value, combinations: this.combinations }); return true; }
         catch { this.message('本地规则保存失败，请保留输入后再关闭。', true); return false; }
@@ -82,9 +100,9 @@ export class BatchPanel {
     }
     message(text, error = false) { this.$('.ww-batch-status').textContent = text; this.$('.ww-batch-status').classList.toggle('ww-error', error); }
     async api(name, body = {}) {
-        const response = await fetch(`/api/plugins/writer-workbench-batch/${name}`, { method: 'POST', headers: this.app.bridge.context().getRequestHeaders(), body: JSON.stringify(body) });
-        if (response.status === 404) throw Error('本地批量替换模块尚未加载。已安装在 plugins/writer-workbench-batch；请启用 config.yaml 的 enableServerPlugins 并重启酒馆。TauriTavern 需另行配置本地适配接口。');
-        const data = await response.json(); if (!response.ok || data.error) throw Error(data.error || `请求失败（${response.status}）。`); return data;
+        this.clientPromise ||= createBatchClient(this.app.bridge).catch(error => { this.clientPromise = null; throw error; });
+        this.client = await this.clientPromise;
+        return this.client.call(name, body);
     }
     async open() {
         if (!this.loaded) {
@@ -105,6 +123,29 @@ export class BatchPanel {
     }
     async refresh() {
         this.message('正在读取资源列表…'); this.inventory = await this.api('inventory'); this.renderOwners();
+        if (this.inventory.supportedScopes) {
+            this.syncScopeCapabilities();
+            this.$('.ww-batch-backups>small').textContent = `备份保存在${this.inventory.backupLocation}；可下载 ZIP 或导入本工作台导出的 TT 备份。恢复将检查修改后是否又有新变化。`;
+            this.panel.querySelector(':scope > p').textContent = `当前宿主：TauriTavern。通过当前 TT 原生接口读取和保存，不使用 SillyTavern 服务端插件。${this.inventory.warning}`;
+            this.$('[data-batch="paths"]').closest('label').hidden = true;
+            this.$('[data-batch="paths"]').closest('label').nextElementSibling.hidden = true;
+            this.$('.ww-batch-confirm>small').textContent = '先保存并复读校验全部原文、预期结果及角色／身份原始 PNG，再逐项保存并校验；失败停止并尝试恢复已提交项。不是跨资源原子事务。执行期间暂停其他编辑与同步，结束后自动重新载入。';
+            this.$('.ww-batch-targets>small').textContent = 'TT 中角色卡内保存的世界书与独立世界书分别勾选。TT 导出卡时会用绑定的独立世界书重新生成内嵌内容；要替换该绑定书中实际生效的内容，也请勾选对应的独立世界书。勾选聊天范围时，所选角色的全部聊天分支一并纳入。同名 Persona 按头像 ID 区分。';
+            if (!this.$('[data-batch-action="import-tt-backup"]')) {
+                const input = node('input'); input.type = 'file'; input.accept = '.zip,application/zip'; input.hidden = true;
+                const launch = button('导入 TT 工作台备份 ZIP', 'import-tt-backup');
+                launch.addEventListener('click', () => input.click());
+                input.addEventListener('change', async () => {
+                    const file = input.files?.[0]; if (!file) return;
+                    try { const result = await this.client.importBackup(file); this.message(`已校验并导入备份 ${result.id}，尚未恢复业务资料。`); await this.backups(); }
+                    catch (error) { this.message(error.message, true); }
+                    finally { input.value = ''; }
+                });
+                this.$('.ww-batch-backups>.ww-row').append(launch, input);
+            }
+        }
+        this.renderDatasetBinding();
+        if (this.inventory.datasetBinding) { this.message('导入资料的目录标记与当前 TT 不同。请核对上方目录并登记，尚未扫描或修改资料。', true); return; }
         this.message(`已识别 ${this.inventory.resources.length} 个文件。请选择规则和范围后扫描。`);
     }
     renderOwners() {
@@ -257,13 +298,16 @@ export class BatchPanel {
     }
     async backups() {
         const backups = await this.api('backups'), list = this.$('.ww-batch-backup-list'); list.replaceChildren();
-        const states = { preparing: '备份中', prepared: '备份已就绪', pending: '尚未提交', committing: '提交中', committed: '已修改', complete: '已完成', 'needs-attention': '需要检查恢复', aborted: '执行中止，已恢复', restored: '已恢复', restoring: '恢复中', unchanged: '原文未改', conflict: '存在新变化', 'partially-restored': '部分恢复，保留冲突', unreadable: '清单无法读取' };
+        const states = { preparing: '备份中', prepared: '备份已就绪', pending: '尚未提交', committing: '提交中', committed: '已修改', complete: '已完成', 'needs-attention': '需要检查恢复', aborted: '执行中止，已恢复', restored: '已恢复', restoring: '恢复中', unchanged: '原文未改', conflict: '存在新变化', 'partially-restored': '部分恢复，保留冲突', unreadable: '清单无法读取', foreign: '迁移前／其他资料集，仅可下载' };
         for (const backup of backups) {
             const item = node('details'), summary = node('summary', `${backup.created ? new Date(backup.created).toLocaleString('zh-CN') : backup.id} · ${states[backup.status] || backup.status} · ${backup.files?.length || 0} 个文件`); item.append(summary);
             item.append(node('p', backup.id));
             for (const file of backup.files || []) item.append(node('div', `${file.path} · ${states[file.state] || file.state}`));
             if (backup.error) item.append(node('p', backup.error));
-            if (backup.status !== 'unreadable') { const restore = button('恢复此备份…', 'restore'); restore.dataset.id = backup.id; const download = button('下载完整备份 ZIP', 'download'); download.dataset.id = backup.id; item.append(restore, download); }
+            if (backup.status !== 'unreadable') {
+                if (backup.status !== 'foreign') { const restore = button('恢复此备份…', 'restore'); restore.dataset.id = backup.id; item.append(restore); }
+                const download = button('下载完整备份 ZIP', 'download'); download.dataset.id = backup.id; item.append(download);
+            }
             list.append(item);
         }
         if (!backups.length) list.append(node('p', '尚无批量替换备份。'));
@@ -284,6 +328,16 @@ export class BatchPanel {
         if (action === 'close') { this.close(); return; }
         if (action === 'cancel') { this.cancelRequested = true; if (this.jobId) await this.api('cancel', { id: this.jobId }); return; }
         if (this.scanning) return;
+        if (action === 'register-dataset') {
+            const binding = this.inventory?.datasetBinding; if (!binding) throw Error('资料集状态已改变，请刷新列表。');
+            this.operation = true; control.disabled = true;
+            try {
+                await this.api('register-dataset', { confirm: true, previousId: binding.previousId, root: binding.currentRoot });
+                this.targets.clear(); this.$('[data-batch="mode"]').value = 'local'; this.invalidate(); await this.persist(); await this.refresh();
+                this.message(`当前导入资料已登记，已识别 ${this.inventory.resources.length} 份资源。旧备份保留且隔离，尚未替换业务资料。请重新选择资源并扫描。`);
+            } finally { this.operation = false; control.disabled = false; this.syncScopeCapabilities(); }
+            return;
+        }
         if (action === 'add') { this.addRule(); this.invalidate(); await this.persist(); }
         if (action === 'remove-rule') { control.closest('.ww-batch-rule').remove(); this.invalidate(); await this.persist(); }
         if (action === 'save-combo') { const name = this.$('[data-batch="combo-name"]').value.trim(); if (!name || ['__proto__', 'prototype', 'constructor'].includes(name)) throw Error('请填写有效组合名称。'); validateRules(this.rules()); this.combinations[name] = this.rules(); if (!await this.persist()) throw Error('组合未能保存到本地，请保留规则输入后重试。'); this.renderCombinations(); this.message('规则组合已保存。'); }
@@ -292,7 +346,7 @@ export class BatchPanel {
             if (action === 'load-combo') { this.$('.ww-batch-rules').replaceChildren(); this.combinations[name].forEach(r => this.addRule(r)); this.invalidate(); }
             else { delete this.combinations[name]; this.renderCombinations(); } await this.persist();
         }
-        if (action === 'all-scopes' || action === 'clear-scopes') { this.panel.querySelectorAll('[data-batch-scope]').forEach(el => { el.checked = action === 'all-scopes'; }); this.invalidate(); await this.persist(); }
+        if (action === 'all-scopes' || action === 'clear-scopes') { this.panel.querySelectorAll('[data-batch-scope]').forEach(el => { el.checked = action === 'all-scopes' && !el.disabled && (!this.inventory?.supportedScopes || this.inventory.supportedScopes.includes(el.value)); }); this.invalidate(); await this.persist(); }
         if (action === 'select-targets' || action === 'clear-targets') {
             this.targets = selectTargetGroup(this.targets, this.targetOwners(), control.dataset.ownerType, action === 'select-targets', this.$('[data-batch="target-search"]').value);
             this.$('[data-batch="mode"]').value = 'local'; this.invalidate(); this.renderOwners(); await this.persist();
@@ -301,7 +355,7 @@ export class BatchPanel {
         if (action === 'scan') await this.scan();
         if (action === 'more') await this.loadPreview(control.closest('.ww-batch-file'), Number(control.dataset.offset));
         if (action === 'select-files' || action === 'unselect-files') { this.excludedFiles = new Set(action === 'select-files' ? [] : this.snapshot.files.map(f => f.id)); this.panel.querySelectorAll('[data-batch-file]').forEach(el => { el.checked = !this.excludedFiles.has(el.value); }); this.updateSelection(); }
-        if (action === 'prepare') { this.checkWriting(); this.$('.ww-batch-confirm p').textContent = `将修改 ${this.selection.files} 个文件中的 ${this.selection.count} 处匹配。修改前将创建完整文件备份。`; this.$('.ww-batch-confirm').hidden = false; revealInWorkbench(this.app, this.$('.ww-batch-confirm')); }
+        if (action === 'prepare') { this.checkWriting(); this.$('.ww-batch-confirm p').textContent = `将修改 ${this.selection.files} 个文件中的 ${this.selection.count} 处匹配。${this.client?.host === 'tt' ? '修改前保存资源内容及可用的原始图片备份。' : '修改前将创建完整文件备份。'}`; this.$('.ww-batch-confirm').hidden = false; revealInWorkbench(this.app, this.$('.ww-batch-confirm')); }
         if (action === 'dismiss') this.$('.ww-batch-confirm').hidden = true;
         if (action === 'backups') await this.backups();
         if (action === 'hide-backups') this.$('.ww-batch-backups').hidden = true;
@@ -327,9 +381,14 @@ export class BatchPanel {
             finally { this.operation = false; this.app.dialog.inert = false; this.app.busy = !!this.requiresReload; if (!this.requiresReload) control.disabled = false; }
         }
         if (action === 'download') {
-            const response = await fetch('/api/plugins/writer-workbench-batch/download', { method: 'POST', headers: this.app.bridge.context().getRequestHeaders(), body: JSON.stringify({ id: control.dataset.id }) });
-            if (!response.ok) throw Error('备份下载失败，请检查本地备份清单。');
-            const a = document.createElement('a'), url = URL.createObjectURL(await response.blob()); a.href = url; a.download = `writer-workbench-backup-${control.dataset.id}.zip`; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            const blob = await this.client.download(control.dataset.id), name = `writer-workbench-backup-${control.dataset.id}.zip`;
+            if (this.client.host === 'tt') {
+                const { download } = await import('/scripts/utils.js');
+                const result = await download(blob, name, 'application/zip', { throwOnFailure: true });
+                if (!result?.delivered) throw Error('备份保存已取消或未完成。');
+            } else {
+                const a = document.createElement('a'), url = URL.createObjectURL(blob); a.href = url; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(url), 1000);
+            }
         }
     }
 }

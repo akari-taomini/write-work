@@ -230,6 +230,7 @@ export class Workbench {
         catch (error) { console.error('[Writer Workbench]', error); this.message(error.message || String(error), true); }
         finally {
             controls.forEach((x, i) => { x.disabled = disabled[i]; });
+            this.batch?.syncScopeCapabilities();
             this.busy = false; this.dialog.removeAttribute('aria-busy');
             this.$('[data-action="accept"]').disabled = !this.suggestion;
             this.$('[data-action="append"]').disabled = !this.suggestion;
@@ -1083,3 +1084,5 @@ if (!globalThis.__WW_TEST__) {
     if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', install, { once: true });
     else install();
 }
+
+
